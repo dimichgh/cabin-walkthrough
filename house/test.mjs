@@ -32,7 +32,7 @@ function findChrome() {
 }
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cabin-test-'));
 const chrome = spawn(findChrome(), ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, `--window-size=${W},${Hh}`,
-  '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
+  ...(argv.includes('--gpu') ? ['--use-angle=metal', '--enable-gpu'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']), '--ignore-gpu-blocklist', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let ws, seq = 0; const pending = new Map();
 const send = (method, params = {}) => new Promise((res) => { const i = ++seq; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
@@ -146,6 +146,22 @@ try {
     await ev('CABIN.setQuality(1)');
     console.log(`input: label "${tagged}", toolbar, walk-here, place list, W moved ${moved.toFixed(1)} ft, drag turned ${((c.walker.yaw - b.walker.yaw) * 57.3).toFixed(0)}°, keys 3/1 ok`);
     await ev(`(CABIN.setView('orbit'), CABIN.setLabels(false), document.querySelector('#info').hidden = true, true)`);
+  }
+  if (only.has('photo')) {
+    const target = +opt('--spp', argv.includes('--gpu') ? 400 : 4);
+    const waitSamples = async (label) => {
+      const t0 = Date.now(); while (Date.now() - t0 < 240000) { if (await ev('CABIN.photo.active') && await ev('CABIN.photo.samples') >= target) break; await sleep(1000); }
+      const n = await ev('CABIN.photo.samples'); console.log(`photo ${label}: ${n} samples in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+      if (n < Math.min(target, 2)) fail(`photo mode did not render (${label}): ${n} samples`);
+    };
+    await ev(`(CABIN.setView('orbit'), CABIN.setLabels(false), document.querySelector('#info').hidden = true, CABIN.view('p03',{instant:true}), CABIN.setMode('photo'), true)`);
+    await waitSamples('p03'); report.shots.push(await shot('g-photo-p03'));
+    const resetWait = async () => { const t0 = Date.now(); await sleep(400); while (Date.now() - t0 < 15000 && await ev('CABIN.photo.samples') >= target) await sleep(200); };
+    for (const id of opt('--pviews', 'living,stair,suite,terrace').split(',')) { await ev(`(CABIN.goTo('${id}'), true)`); await resetWait(); await waitSamples(id); report.shots.push(await shot('g-photo-' + id)); }
+    await ev(`(CABIN.setView('orbit'), CABIN.view('p01',{instant:true}), true)`); await resetWait(); await waitSamples('p01'); report.shots.push(await shot('g-photo-p01'));
+    await ev(`CABIN.setMode('real')`);
+    const f0 = await ev('CABIN.frames'); await ev('CABIN.look(0,-4) || true'); await sleep(3000); if (!(await ev('CABIN.frames') > f0)) fail('render loop stopped after leaving photo mode');
+    if (await ev('CABIN.state.mode') !== 'real') fail('could not leave photo mode');
   }
   if (only.has('info')) {
     await ev(`(CABIN.setMode('real'), CABIN.setView('orbit'), CABIN.view('aerial',{instant:true}), true)`);

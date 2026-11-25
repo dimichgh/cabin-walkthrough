@@ -3,6 +3,7 @@
 `dist/cabin-house.html` is one self-contained file. three.js, the app and the facts are all inline, so it makes no network requests. Open it straight from disk, or publish it to any static host.
 
 ## What it does
+- **Photo** (key `P`): path-traced, photorealistic frames that converge while the camera is still. Use the Exposure and Sun sliders, then Save image.
 - **Real / X-ray / Holo** (keys `1 2 3`): switch between real materials and two see-through views. The real materials are procedural Ipe rain screen, standing-seam metal, glass, concrete, flagstone and white oak.
 - **Orbit / Walk** (key `V`):
   - Walk with `WASD`, look with the mouse (click to lock the pointer, or drag), and run with `Shift`.
@@ -40,4 +41,5 @@ Source files are in `src/`:
 - `trees.js`: procedural spruces, pines, birches and shrubs with bark and needle/leaf textures drawn in code, with lighter variants for distant trees;
 - `walk.js`: first-person physics;
 - `places.js`: labels and views;
+- `photo.js`: photo mode (path tracer setup, HDR sky, glass and paint materials, denoise);
 - `main.js`: the app.

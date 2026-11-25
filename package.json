@@ -10,7 +10,9 @@
     "test:file": "node house/test.mjs --file"
   },
   "devDependencies": {
-    "esbuild": "0.24.0",
-    "three": "0.160.0"
+    "esbuild": "^0.24.0",
+    "three": "^0.187.0",
+    "three-gpu-pathtracer": "^0.0.28",
+    "three-mesh-bvh": "^0.10.0"
   }
 }

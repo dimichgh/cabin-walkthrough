@@ -7,6 +7,7 @@ import { buildSite, PAD } from './site.js';
 import { makeWalker } from './walk.js';
 import { PLACES, VIEWS } from './places.js';
 import { INFO, STATUS } from './info.js';
+import { makePhoto, sunDirection } from './photo.js';
 
 const $ = (s) => document.querySelector(s);
 const boot = (t) => { const b = $('#boot'); if (b) b.textContent = t; };
@@ -21,14 +22,14 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.shadowMap.autoUpdate = false; // everything is static: draw the sun's shadow map once, not every frame
 renderer.localClippingEnabled = true;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.3, 6000);
 const pmrem = new THREE.PMREMGenerator(renderer);
-const envTex = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environment = envTex;
 
 // sky dome
@@ -45,9 +46,11 @@ scene.fog = new THREE.Fog(0xc9dcec, 420, 2600);
 const hemi = new THREE.HemisphereLight(0xe4eef8, 0x5a5440, 0.55);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
-sun.position.set(-95, 150, 70); sun.target.position.set(24, 0, 10);
+sun.target.position.set(24, 0, 10);
+const placeSun = (t) => { sun.position.copy(sun.target.position).addScaledVector(sunDirection(t), 220); renderer.shadowMap.needsUpdate = true; };
+placeSun(0.78);
 sun.castShadow = true;
-Object.assign(sun.shadow.camera, { left: -75, right: 75, top: 75, bottom: -75, near: 20, far: 420 });
+Object.assign(sun.shadow.camera, { left: -75, right: 75, top: 75, bottom: -75, near: 20, far: 460 });
 sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
 
@@ -61,6 +64,7 @@ const H = buildHouse(M);
 const house = new THREE.Group(); H.meshes.forEach((m) => house.add(m)); scene.add(house);
 const site = buildSite(M, H.footprintHole); scene.add(site.group);
 const walker = makeWalker({ colliders: H.colliders, surfaces: [...H.surfaces, ...site.surfaces], bounds: { x0: PAD.x0 + 2, x1: PAD.x1 - 2, z0: PAD.z0 + 2, z1: PAD.z1 - 2 } });
+const photo = makePhoto({ renderer, scene, camera, M, sky, lights: [sun, hemi], site: site.group, house: H.meshes });
 const grid = new THREE.GridHelper(240, 48, 0x4fd8ff, 0x1d5f7a); grid.position.set(25, LV.GRADE - 0.02, 10); grid.visible = false; scene.add(grid);
 
 /* ───────── materials per mode (one registry; every building material carries the section plane) ───────── */
@@ -94,8 +98,16 @@ const S = { mode: 'real', view: 'orbit', levels: 'all', labels: true, cut: null 
 const LEVEL_SETS = { all: ['B', '1', '2', 'R'], roof: ['B', '1', '2'], ground: ['B', '1'], basement: ['B'] };
 const levelOn = (lv) => lv === 'site' || LEVEL_SETS[S.levels].includes(lv);
 
+let photoBusy = false, labelsBeforePhoto = null, evOffset = 0, evTouched = false;
 function setMode(mode) {
+  if (photoBusy || !['real', 'photo', 'xray', 'holo'].includes(mode)) return;
+  const prev = S.mode;
+  if (prev === 'photo' && mode !== 'photo') { photo.exit(); window.CABIN?.setQuality(null); if (labelsBeforePhoto != null) setLabels(labelsBeforePhoto); labelsBeforePhoto = null; }
   S.mode = mode;
+  if (mode === 'photo') { applyLook('real'); enterPhoto(prev); }
+  else applyLook(mode);
+}
+function applyLook(mode) {
   if (mode !== 'real') buildEdges();
   for (const mesh of H.meshes) {
     const k = mesh.userData.mat;
@@ -109,19 +121,43 @@ function setMode(mode) {
   scene.fog = real ? new THREE.Fog(0xc9dcec, 420, 2600) : null;
   scene.background = real ? null : new THREE.Color(mode === 'xray' ? 0xeef2f6 : 0x030b16);
   grid.material.opacity = mode === 'xray' ? 0.35 : 0.5; grid.material.transparent = true;
-  document.body.dataset.mode = mode;
-  document.querySelectorAll('#bar button[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+  document.body.dataset.mode = S.mode;
+  document.querySelectorAll('#bar button[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === S.mode));
   needsRender = true;
+}
+// photo mode: path tracing needs a prepared scene (geometry BVH, textures); show a note while that happens
+function busy(on, text) { const el = $('#busy'); el.textContent = text || ''; el.hidden = !on; }
+function enterPhoto(prev) {
+  if (prev !== 'photo') { labelsBeforePhoto = S.labels; setLabels(false); }
+  setCut(null); window.CABIN?.setQuality(1);
+  photoBusy = true; busy(true, 'Preparing photo mode…');
+  setTimeout(() => {
+    try { photo.enter(); autoExposure(true); }
+    catch (e) { console.error(e); photoBusy = false; busy(false); S.mode = 'real'; applyLook('real'); alert('Photo mode could not start on this device: ' + e.message); return; }
+    photoBusy = false; busy(false); lastCamKey = '';
+  }, 40);
+}
+const insideHouse = () => { const s = walker.s; return S.view === 'walk' && ((s.x > 0.3 && s.x < 59.5 && s.z > 0.3 && s.z < 31.8) || (s.y > 9 && s.x > -0.3 && s.x < 28.3 && s.z > -15.2 && s.z < 32.3)); };
+let wasInside = null;
+function autoExposure(force) {
+  const inside = insideHouse();
+  if (!force && inside === wasInside) return;
+  wasInside = inside; if (force) evTouched = false;
+  const base = inside ? 3.2 : 1.0;
+  renderer.toneMappingExposure = base * Math.pow(2, evOffset);
+  $('#ev').value = evOffset;
 }
 function setLevels(key) {
   if (!LEVEL_SETS[key]) return;
   S.levels = key;
   for (const mesh of H.meshes) mesh.visible = levelOn(mesh.userData.level);
   renderer.shadowMap.needsUpdate = true;
+  if (photo.active && !photoBusy) { photoBusy = true; busy(true, 'Updating photo scene…'); setTimeout(() => { try { photo.rebuild(); } finally { photoBusy = false; busy(false); } }, 40); }
   document.querySelectorAll('#bar button[data-level]').forEach((b) => b.classList.toggle('on', b.dataset.level === key));
   needsRender = true;
 }
 function setCut(h) { // horizontal plan cut: keep everything below h (feet); null = off
+  if (S.mode === 'photo' && h != null) h = null; // the path tracer does not support clipping planes
   S.cut = h; cutPlane.constant = h == null ? 1e4 : h;
   $('#cutOn').checked = h != null; if (h != null) $('#cutH').value = h;
   $('#cutVal').textContent = h == null ? 'off' : ftIn(h);
@@ -181,6 +217,7 @@ addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   keys.add(e.code);
   if (e.code === 'Digit1') setMode('real'); else if (e.code === 'Digit2') setMode('xray'); else if (e.code === 'Digit3') setMode('holo');
+  else if (e.code === 'KeyP') setMode(S.mode === 'photo' ? 'real' : 'photo');
   else if (e.code === 'KeyL') setLabels(!S.labels);
   else if (e.code === 'KeyV') setView(S.view === 'walk' ? 'orbit' : 'walk');
   else if (e.code === 'Escape' && S.view === 'walk' && !document.pointerLockElement) setView('orbit');
@@ -280,6 +317,10 @@ document.querySelectorAll('#bar button[data-view]').forEach((b) => b.addEventLis
 }));
 document.querySelectorAll('#side button[data-cam]').forEach((b) => b.addEventListener('click', () => view(b.dataset.cam)));
 $('#labelsBtn').addEventListener('click', () => setLabels(!S.labels));
+$('#ev').addEventListener('input', (e) => { evOffset = +e.target.value; evTouched = true; renderer.toneMappingExposure = (wasInside ? 3.2 : 1.0) * Math.pow(2, evOffset); });
+$('#sunT').addEventListener('input', (e) => { const t = +e.target.value; placeSun(t); photo.setSun(t); needsRender = true; });
+$('#saveImg').addEventListener('click', () => photo.save(`cabin-photo-${photo.samples}spp.png`));
+for (const id of ['ev', 'sunT']) $('#' + id).addEventListener('change', (e) => e.target.blur());
 $('#cutOn').addEventListener('change', (e) => { setCut(e.target.checked ? +$('#cutH').value : null); e.target.blur(); });
 $('#cutH').addEventListener('input', (e) => setCut(+e.target.value));
 $('#cutH').addEventListener('change', (e) => e.target.blur());
@@ -332,9 +373,20 @@ function tick(now) {
   }
   // compass: plan north is −z
   const d = camera.getWorldDirection(tmp); $('#compass').style.transform = `rotate(${Math.atan2(d.x, -d.z) * -180 / Math.PI}deg)`;
+  if (photo.active || photoBusy) {
+    if (photoBusy) return;
+    const key = camKey();
+    if (key !== lastCamKey) { lastCamKey = key; photo.cameraMoved(); try { updateTags(); } catch (e) { console.error(e); } if (!evTouched) autoExposure(false); }
+    photo.render();
+    if (frames % 10 === 0) { const n = photo.samples; $('#photoInfo').textContent = n >= photo.maxSamples ? `Done · ${n} samples` : n < 3 ? 'Rendering…' : `Rendering · ${n} samples`; }
+    needsRender = false;
+    return;
+  }
   const rendering = needsRender; adapt(now, rendering);
   if (needsRender) { needsRender = false; try { updateTags(); } catch (e) { console.error(e); } renderer.render(scene, camera); }
 }
+let lastCamKey = '';
+const camKey = () => { const p = camera.position, q = camera.quaternion; return [p.x, p.y, p.z, q.x, q.y, q.z, q.w, camera.fov].map((v) => v.toFixed(4)).join(','); };
 orbit.addEventListener('change', () => { needsRender = true; });
 
 /* ───────── automation / tests ───────── */
@@ -369,9 +421,10 @@ window.CABIN = {
   openInfo(id) { const p = PLACES.find((q) => q.id === id); if (!p) throw new Error('no place ' + id); openInfo(p); return document.querySelector('#info h2').textContent; },
   places: PLACES.map((p) => p.id),
   get frames() { return frames; },
+  photo: { get active() { return photo.active && !photoBusy; }, get samples() { return photo.samples; }, setSun(t) { placeSun(t); photo.setSun(t); }, setEV(v) { evOffset = v; evTouched = true; renderer.toneMappingExposure = (wasInside ? 3.2 : 1.0) * Math.pow(2, v); } },
   setQuality(v) { prPinned = v == null ? null : +v; pr = prPinned ?? PR_MAX; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); needsRender = true; return pr; },
   get pixelRatio() { return pr; },
-  renderNow() { updateTags(); renderer.render(scene, camera); return true; },
+  renderNow() { updateTags(); if (photo.active) photo.render(); else renderer.render(scene, camera); return true; },
   look(yawDeg, pitchDeg = -4) { walker.s.yaw = yawDeg * D; walker.s.pitch = pitchDeg * D; needsRender = true; },
 };
 

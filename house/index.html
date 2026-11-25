@@ -71,6 +71,13 @@
   #helpBtn { position: fixed; right: 80px; bottom: 26px; width: 34px; height: 34px; border-radius: 50%; font-weight: 700; }
   #help { position: fixed; right: 16px; bottom: 76px; width: 330px; padding: 12px 14px; display: none; }
   #help.open { display: block; } #help h4 { margin: 0 0 6px; } #help p { margin: 4px 0; color: var(--mute); } #help kbd { font: 600 11px ui-monospace, Menlo, monospace; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); }
+  #photoBar { position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); display: none; gap: 14px; align-items: center; padding: 7px 12px; white-space: nowrap; }
+  body[data-mode="photo"] #photoBar { display: flex; }
+  #photoBar label { display: flex; gap: 6px; align-items: center; font-weight: 550; } #photoBar input { width: 90px; accent-color: var(--acc); }
+  #photoInfo { font-weight: 650; min-width: 150px; font-variant-numeric: tabular-nums; }
+  body[data-mode="photo"] .cut { opacity: .35; pointer-events: none; }
+  #busy { position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%); padding: 14px 20px; font-weight: 600; }
+  #busy[hidden] { display: none; }
   #boot { position: fixed; inset: 0; display: grid; place-items: center; font-size: 14px; color: #5d6872; background: #e9eef0; }
   @media (max-width: 900px) {
     #title { max-width: 60vw; padding: 8px 12px; } #title p, #title .k { display: none; } #title h1 { font-size: 17px; }
@@ -91,7 +98,7 @@
 </header>
 
 <nav id="bar" class="panel">
-  <div class="seg" title="Materials (1 · 2 · 3)"><button data-mode="real" class="on">Real</button><button data-mode="xray">X-ray</button><button data-mode="holo">Holo</button></div>
+  <div class="seg" title="Look: Real (1), Photo (P), X-ray (2), Holo (3)"><button data-mode="real" class="on">Real</button><button data-mode="photo" title="Photorealistic, path traced (P)">Photo</button><button data-mode="xray">X-ray</button><button data-mode="holo">Holo</button></div>
   <div class="seg" title="Orbit or walk (V)"><button data-view="orbit" class="on">Orbit</button><button data-view="walk">Walk</button></div>
   <div class="seg" title="Cutaway"><button data-level="all" class="on">Whole</button><button data-level="roof">Roof off</button><button data-level="ground">Ground floor</button><button data-level="basement">Basement</button></div>
   <label class="cut" title="Horizontal section: everything above this height is cut away"><input type="checkbox" id="cutOn"> Cut <input type="range" id="cutH" min="-9" max="31" step="0.5" value="5"><output id="cutVal">off</output></label>
@@ -127,11 +134,19 @@
   <span class="oo">Drag to orbit · scroll to zoom · <b>double-click a floor</b> to walk from there</span>
   <span class="ow"><b>WASD</b> move · <b>mouse</b> look (click to lock, or drag) · <b>Shift</b> run · <b>Esc</b> back to orbit</span>
 </div>
+<div id="photoBar" class="panel">
+  <span id="photoInfo">Rendering…</span>
+  <label title="Exposure, in stops">Exposure <input type="range" id="ev" min="-2" max="2" step="0.1" value="0"></label>
+  <label title="Time of day: morning (east) to evening (west)">Sun <input type="range" id="sunT" min="0.06" max="0.94" step="0.01" value="0.78"></label>
+  <button id="saveImg" class="tog">Save image</button>
+</div>
+<div id="busy" class="panel" hidden></div>
 <div id="compass" class="panel" title="Plan north"><b>N</b><i></i></div>
 <button id="helpBtn" class="panel" title="Help">?</button>
 <div id="help" class="panel">
   <h4>How to use</h4>
-  <p><kbd>1</kbd> Real materials · <kbd>2</kbd> X-ray · <kbd>3</kbd> Hologram</p>
+  <p><kbd>1</kbd> Real materials · <kbd>P</kbd> Photo (path traced) · <kbd>2</kbd> X-ray · <kbd>3</kbd> Hologram</p>
+  <p>Photo mode refines the image while the camera is still: stop moving for a few seconds for a clean frame, then use Save image. Exposure and Sun (time of day) are in the photo bar.</p>
   <p><kbd>V</kbd> toggle walk / orbit · <kbd>W A S D</kbd> walk · <kbd>←</kbd><kbd>→</kbd> turn · <kbd>Shift</kbd> run · <kbd>L</kbd> labels</p>
   <p>Stairs work: walk onto them. On a phone, drag the left side to move and the right side to look.</p>
   <p>Independent study model, not affiliated with the architects. The construction drawings were published by Bob Borson on Life of an Architect (The Cabin Project).</p>
