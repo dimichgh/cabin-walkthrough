@@ -7,7 +7,10 @@ import { buildSite, PAD } from './site.js';
 import { makeWalker } from './walk.js';
 import { PLACES, VIEWS } from './places.js';
 import { INFO, STATUS } from './info.js';
-import { makePhoto, sunDirection } from './photo.js';
+import { makePhoto, sunDirection, makeNightLights } from './photo.js';
+import { buildFurniture } from './furniture.js';
+import { buildCar } from './car.js';
+import { makeKit } from './kit.js';
 
 const $ = (s) => document.querySelector(s);
 const boot = (t) => { const b = $('#boot'); if (b) b.textContent = t; };
@@ -61,10 +64,18 @@ for (const m of Object.values(M)) if (m.isMeshStandardMaterial) m.envMapIntensit
 M.glass.envMapIntensity = 1.4; M.roof.envMapIntensity = 0.28;
 boot('Building the cabin…');
 const H = buildHouse(M);
+// furniture, fixtures and the car join the building's mesh list (so modes, cutaways and photo swaps apply);
+// their meshes and colliders carry userData.opt / opt so they can be switched off
+const F = buildFurniture(M);
+const carKit = makeKit(); carKit.level = '1'; carKit.opt = 'car';
+carKit.push(72.5, LV.GRADE, 17.0, 180); buildCar(carKit); carKit.pop();
+H.meshes.push(...F.meshes, ...carKit.finish(M));
+const optColliders = [...F.colliders, ...carKit.colliders];
 const house = new THREE.Group(); H.meshes.forEach((m) => house.add(m)); scene.add(house);
+const nightLights = makeNightLights(F.lights); scene.add(nightLights);
 const site = buildSite(M, H.footprintHole); scene.add(site.group);
-const walker = makeWalker({ colliders: H.colliders, surfaces: [...H.surfaces, ...site.surfaces], bounds: { x0: PAD.x0 + 2, x1: PAD.x1 - 2, z0: PAD.z0 + 2, z1: PAD.z1 - 2 } });
-const photo = makePhoto({ renderer, scene, camera, M, sky, lights: [sun, hemi], site: site.group, house: H.meshes });
+const walker = makeWalker({ colliders: [...H.colliders, ...optColliders], surfaces: [...H.surfaces, ...site.surfaces], bounds: { x0: PAD.x0 + 2, x1: PAD.x1 - 2, z0: PAD.z0 + 2, z1: PAD.z1 - 2 } });
+const photo = makePhoto({ renderer, scene, camera, M, sky, lights: [sun, hemi], site: site.group, house: H.meshes, nightLights, lightOn: (l) => lightWanted(l) });
 const grid = new THREE.GridHelper(240, 48, 0x4fd8ff, 0x1d5f7a); grid.position.set(25, LV.GRADE - 0.02, 10); grid.visible = false; scene.add(grid);
 
 /* ───────── materials per mode (one registry; every building material carries the section plane) ───────── */
@@ -89,14 +100,26 @@ function buildEdges() {
   if (edgesBuilt) return; edgesBuilt = true;
   for (const mesh of H.meshes) {
     if (['ceil', 'soffit', 'rug', 'glass'].includes(mesh.userData.mat)) continue;
-    const e = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 28), EDGE.xray);
+    if (mesh.userData.mat === 'flame') continue;
+    const e = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, mesh.userData.opt ? 55 : 28), EDGE.xray);
     e.visible = false; e.raycast = () => {}; mesh.add(e); mesh.userData.edges = e;
   }
 }
 
-const S = { mode: 'real', view: 'orbit', levels: 'all', labels: true, cut: null };
+const S = { mode: 'real', view: 'orbit', levels: 'all', labels: true, cut: null, furniture: true, car: true, time: 'day' };
 const LEVEL_SETS = { all: ['B', '1', '2', 'R'], roof: ['B', '1', '2'], ground: ['B', '1'], basement: ['B'] };
 const levelOn = (lv) => lv === 'site' || LEVEL_SETS[S.levels].includes(lv);
+const optOn = (opt) => !opt || S[opt];
+const meshOn = (m) => levelOn(m.userData.level) && optOn(m.userData.opt);
+// which night lights the path tracer gets: all of them from outside; from inside, the ones near you on your floor
+// (it samples one light at random per bounce, so far-away lights only add noise)
+const floorOf = (y) => (y < -5 ? 'B' : y < 5 ? '1' : '2');
+function lightWanted(l) {
+  if (!levelOn(l.userData.level) || !optOn(l.userData.opt)) return false;
+  if (!insideHouse()) return true;
+  const d = l.position.distanceTo(camera.position);
+  return d < 34 && (l.userData.level === floorOf(walker.s.y) || d < 14);
+}
 
 let photoBusy = false, labelsBeforePhoto = null, evOffset = 0;
 function setMode(mode) {
@@ -111,8 +134,8 @@ function applyLook(mode) {
   if (mode !== 'real') buildEdges();
   for (const mesh of H.meshes) {
     const k = mesh.userData.mat;
-    mesh.material = mode === 'real' ? M[k] : (mode === 'xray' ? XRAY : HOLO)[CAT(k)];
-    mesh.castShadow = mode === 'real' && !['glass', 'screen', 'ceil', 'soffit'].includes(k);
+    mesh.material = mode === 'real' || k === 'flame' ? M[k] : (mode === 'xray' ? XRAY : HOLO)[CAT(k)];
+    mesh.castShadow = mode === 'real' && !['glass', 'screen', 'ceil', 'soffit', 'flame'].includes(k);
     if (mesh.userData.edges) { mesh.userData.edges.visible = mode !== 'real'; mesh.userData.edges.material = EDGE[mode] || EDGE.xray; }
   }
   const real = mode === 'real';
@@ -141,11 +164,12 @@ function enterPhoto(prev) {
 // luminance, quarter power), so a dark basement opens up without blowing out a bright living room. The Exposure
 // slider adds compensation in stops on top.
 const insideHouse = () => { const p = walker.s; return S.view === 'walk' && ((p.x > 0.3 && p.x < 59.5 && p.z > 0.3 && p.z < 31.8) || (p.y > 9 && p.x > -0.3 && p.x < 28.3 && p.z > -15.2 && p.z < 32.3)); };
+const EXPOSURE_BASE = { day: [1.0, 3.4], dusk: [2.4, 2.6], night: [3.0, 2.2] }; // [outside, inside]
 const exposure = { cur: 1, target: 1, metered: 0, L: 0.03, base: 1, snap: true, at: new THREE.Vector3() };
 const applyExposure = () => { renderer.toneMappingExposure = exposure.cur * Math.pow(2, evOffset); };
 const exposureFor = () => Math.max(0.6, Math.min(14, exposure.base * Math.pow(0.03 / Math.max(exposure.L, 1e-5), 0.25)));
 function meterExposure(real) {
-  const base = insideHouse() ? 3.4 : 1.0;
+  const base = (EXPOSURE_BASE[S.time] || EXPOSURE_BASE.day)[insideHouse() ? 1 : 0];
   if (base !== exposure.base) { exposure.base = base; exposure.target = exposureFor(); }
   const n = photo.samples;
   for (const at of [4, 24, 96]) if (n >= at && exposure.metered < at) {
@@ -158,10 +182,32 @@ function meterExposure(real) {
 function setLevels(key) {
   if (!LEVEL_SETS[key]) return;
   S.levels = key;
-  for (const mesh of H.meshes) mesh.visible = levelOn(mesh.userData.level);
+  for (const mesh of H.meshes) mesh.visible = meshOn(mesh);
   renderer.shadowMap.needsUpdate = true;
-  if (photo.active && !photoBusy) { photoBusy = true; busy(true, 'Updating photo scene…'); setTimeout(() => { try { photo.rebuild(); } finally { photoBusy = false; busy(false); } }, 40); }
+  photoRebuild();
   document.querySelectorAll('#bar button[data-level]').forEach((b) => b.classList.toggle('on', b.dataset.level === key));
+  needsRender = true;
+}
+// furniture / car on or off: meshes, colliders, lamps; photo mode needs a rebuild (geometry changed)
+function setOption(name, on) {
+  if (!['furniture', 'car'].includes(name) || photoBusy) return;
+  S[name] = !!on;
+  for (const mesh of H.meshes) mesh.visible = meshOn(mesh);
+  for (const c of optColliders) c.off = !optOn(c.opt);
+  renderer.shadowMap.needsUpdate = true;
+  $(name === 'furniture' ? '#furnBtn' : '#carBtn').classList.toggle('on', S[name]);
+  photoRebuild(); needsRender = true;
+}
+function photoRebuild() {
+  if (!photo.active || photoBusy) return;
+  photoBusy = true; busy(true, 'Updating photo scene…');
+  setTimeout(() => { try { photo.refreshLights(); photo.rebuild(); } finally { photoBusy = false; busy(false); exposure.metered = 0; } }, 40);
+}
+function setTime(t) {
+  if (photoBusy || !photo.setTime(t)) return;
+  S.time = t; exposure.metered = 0; exposure.snap = true;
+  document.querySelectorAll('#timeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.time === t));
+  $('#sunLbl').classList.toggle('off', t !== 'day');
   needsRender = true;
 }
 function setCut(h) { // horizontal plan cut: keep everything below h (feet); null = off
@@ -227,6 +273,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Digit1') setMode('real'); else if (e.code === 'Digit2') setMode('xray'); else if (e.code === 'Digit3') setMode('holo');
   else if (e.code === 'KeyP') setMode(S.mode === 'photo' ? 'real' : 'photo');
   else if (e.code === 'KeyL') setLabels(!S.labels);
+  else if (e.code === 'KeyF') setOption('furniture', !S.furniture);
+  else if (e.code === 'KeyC') setOption('car', !S.car);
   else if (e.code === 'KeyV') setView(S.view === 'walk' ? 'orbit' : 'walk');
   else if (e.code === 'Escape' && S.view === 'walk' && !document.pointerLockElement) setView('orbit');
   if (S.view === 'walk' && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
@@ -252,7 +300,7 @@ canvas.addEventListener('touchend', endTouch); canvas.addEventListener('touchcan
 canvas.addEventListener('dblclick', (e) => {
   if (S.view !== 'orbit') return;
   const ray = new THREE.Raycaster(); ray.setFromCamera(new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1), camera);
-  const hits = ray.intersectObjects([...H.meshes.filter((m) => m.visible), ...site.group.children.filter((m) => m.userData.site === 'pad' || m.userData.site === 'drive')], false)
+  const hits = ray.intersectObjects([...H.meshes.filter((m) => m.visible && !m.userData.opt), ...site.group.children.filter((m) => m.userData.site === 'pad' || m.userData.site === 'drive')], false)
     .filter((h) => h.face && h.face.normal.y > 0.7 && (S.cut == null || h.point.y < S.cut));
   if (!hits.length) return;
   const p = hits[0].point, d = camera.getWorldDirection(new THREE.Vector3());
@@ -325,8 +373,11 @@ document.querySelectorAll('#bar button[data-view]').forEach((b) => b.addEventLis
 }));
 document.querySelectorAll('#side button[data-cam]').forEach((b) => b.addEventListener('click', () => view(b.dataset.cam)));
 $('#labelsBtn').addEventListener('click', () => setLabels(!S.labels));
+$('#furnBtn').addEventListener('click', () => setOption('furniture', !S.furniture));
+$('#carBtn').addEventListener('click', () => setOption('car', !S.car));
+document.querySelectorAll('#timeSeg button').forEach((b) => b.addEventListener('click', () => setTime(b.dataset.time)));
 $('#ev').addEventListener('input', (e) => { evOffset = +e.target.value; applyExposure(); });
-$('#sunT').addEventListener('input', (e) => { const t = +e.target.value; placeSun(t); photo.setSun(t); needsRender = true; });
+$('#sunT').addEventListener('input', (e) => { const t = +e.target.value; placeSun(t); photo.setSun(t); exposure.metered = 0; needsRender = true; });
 $('#saveImg').addEventListener('click', () => photo.save(`cabin-photo-${photo.samples}spp.png`));
 for (const id of ['ev', 'sunT']) $('#' + id).addEventListener('change', (e) => e.target.blur());
 $('#cutOn').addEventListener('change', (e) => { setCut(e.target.checked ? +$('#cutH').value : null); e.target.blur(); });
@@ -384,7 +435,7 @@ function tick(now) {
   if (photo.active || photoBusy) {
     if (photoBusy) return;
     const key = camKey();
-    if (key !== lastCamKey) { exposure.snap = !lastCamKey || camera.position.distanceTo(exposure.at) > 6; exposure.at.copy(camera.position); lastCamKey = key; exposure.metered = 0; photo.cameraMoved(); try { updateTags(); } catch (e) { console.error(e); } }
+    if (key !== lastCamKey) { exposure.snap = !lastCamKey || camera.position.distanceTo(exposure.at) > 6; exposure.at.copy(camera.position); lastCamKey = key; exposure.metered = 0; photo.refreshLights(); photo.cameraMoved(); try { updateTags(); } catch (e) { console.error(e); } }
     photo.render(); meterExposure(real);
     if (frames % 10 === 0) { const n = photo.samples; $('#photoInfo').textContent = n >= photo.maxSamples ? `Done · ${n} samples` : n < 3 ? 'Rendering…' : `Rendering · ${n} samples`; }
     needsRender = false;
@@ -425,11 +476,12 @@ function checkPlaces() {
 }
 window.CABIN = { renderer, scene,
   get state() { return { ...S, walker: { ...walker.s } }; },
-  setMode, setLevels, setCut, setView, view, goTo, walkAt, setLabels, testRoute, checkPlaces, stats: H.stats,
+  setMode, setLevels, setCut, setView, view, goTo, walkAt, setLabels, setOption, testRoute, checkPlaces, stats: H.stats,
+  get counts() { return { meshes: H.meshes.length, visible: H.meshes.filter((m) => m.visible).length, colliders: walker.colliderCount?.() ?? null, optOff: optColliders.filter((c) => c.off).length, lights: nightLights.children.filter((l) => l.isLight).length }; },
   openInfo(id) { const p = PLACES.find((q) => q.id === id); if (!p) throw new Error('no place ' + id); openInfo(p); return document.querySelector('#info h2').textContent; },
   places: PLACES.map((p) => p.id),
   get frames() { return frames; },
-  photo: { get active() { return photo.active && !photoBusy; }, get samples() { return photo.samples; }, setSun(t) { placeSun(t); photo.setSun(t); }, setEV(v) { evOffset = v; applyExposure(); }, get exposure() { return +exposure.cur.toFixed(2); }, meter: () => photo.meter(), get stats() { photo.meter(); return photo.stats; } },
+  photo: { setTime, rebuild() { photoRebuild(); }, get time() { return photo.time; }, get lights() { return photo.lightCount; }, get glow() { return photo.glow; }, get active() { return photo.active && !photoBusy; }, get samples() { return photo.samples; }, setSun(t) { placeSun(t); photo.setSun(t); }, setEV(v) { evOffset = v; applyExposure(); }, get exposure() { return +exposure.cur.toFixed(2); }, meter: () => photo.meter(), get stats() { photo.meter(); return photo.stats; } },
   setQuality(v) { prPinned = v == null ? null : +v; pr = prPinned ?? PR_MAX; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); needsRender = true; return pr; },
   get pixelRatio() { return pr; },
   renderNow() { updateTags(); if (photo.active) photo.render(); else renderer.render(scene, camera); return true; },

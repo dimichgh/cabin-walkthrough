@@ -74,19 +74,31 @@ try {
       'entry → basement: gathering, laundry, mechanical': [[31.5, 5.8, TERR], [25.4, 6.5, FF1], [25.4, 15.2, FF1], [4.6, 15.2, FF1], [4.2, 11, FF1], [24.4, 11, FFB], [24.4, 15.4, FFB], [18, 25, FFB], [25.4, 15.4, FFB], [25.4, 9.6, FFB], [25.4, 5.2, FFB], [25.4, 15.2, FFB], [9.2, 15.2, FFB], [5.0, 15.2, FFB], [4.5, 12, FFB]],
       'entry → terrace → fireplace': [[31.5, 5.8, TERR], [31.5, -2, TERR], [20, -2, TERR], [12, -9.5, TERR], [7.1, -12.0, TERR]],
       'hallway → garage → back up': [[31.5, 5.8, TERR], [25.4, 6.5, FF1], [25.4, 15.2, FF1], [30.8, 15.2, FF1], [30.8, 28.5, FF1], [37.6, 28.5, FFG], [45, 22, FFG], [37.6, 28.5, FFG], [30.8, 28.5, FF1]],
-      'second floor: living → screened patio, back down the stair': [[17, 4, FF2], [8.65, -3, FF2], [8.65, -8.8, FF2], [8.65, -3, FF2], [12.5, 7.5, FF2], [4.2, 7.5, FF2], [4.2, 11, FF2], [24.6, 11, FF1]],
-      'terrace steps → lake side → around to the drive': [[18, -3, TERR], [-4, -4, TERR], [-12, -4, -2.45], [-12, 40, -2.45], [70, 40, -2.45], [70, 20, -2.45]],
+      // around the dining table and behind the sofa (furniture on), out to the screened patio, back down the stair
+      'second floor: living → screened patio, back down the stair': [[17, 5.2, FF2], [12.0, 6.5, FF2], [12.0, -4.9, FF2], [7.5, -4.9, FF2], [7.5, -8.8, FF2], [7.5, -4.9, FF2], [12.0, -4.9, FF2], [12.0, 7.3, FF2], [4.2, 7.5, FF2], [4.2, 11, FF2], [24.6, 11, FF1]],
+      'terrace steps → lake side → around to the drive': [[18, -3, TERR], [-4, -4, TERR], [-12, -4, -2.45], [-12, 40, -2.45], [70, 40, -2.45], [66, 26, -2.45]],
     };
-    for (const [name, pts] of Object.entries(routes)) {
-      const log = await ev(`CABIN.testRoute(${JSON.stringify(pts)})`);
-      report.routes[name] = log;
-      const bad = log.filter((l) => !l.ok);
-      console.log(`${bad.length ? '✗' : '✓'} route: ${name}`);
-      for (const b of bad) fail(`${name}: to ${JSON.stringify(b.to)} stopped at ${JSON.stringify(b.at)} minY ${b.minY}${b.why ? ' ' + b.why : ''}`);
+    for (const opts of [true, false]) { // with furniture + car, then without
+      await ev(`(CABIN.setOption('furniture', ${opts}), CABIN.setOption('car', ${opts}), true)`);
+      const tag = opts ? 'furniture on' : 'furniture off';
+      for (const [name, pts] of Object.entries(routes)) {
+        const log = await ev(`CABIN.testRoute(${JSON.stringify(pts)})`);
+        report.routes[`${name} (${tag})`] = log;
+        const bad = log.filter((l) => !l.ok);
+        console.log(`${bad.length ? '✗' : '✓'} route (${tag}): ${name}`);
+        for (const b of bad) fail(`${name} (${tag}): to ${JSON.stringify(b.to)} stopped at ${JSON.stringify(b.at)} minY ${b.minY}${b.why ? ' ' + b.why : ''}`);
+      }
+      report.places = await ev('CABIN.checkPlaces()');
+      for (const p of report.places) if (!p.floorOk || !p.clear) fail(`walk-to spot ${p.id} (${tag}): ground ${p.ground}, floorOk ${p.floorOk}, clear ${p.clear}`);
+      console.log(`places checked (${tag}): ${report.places.length}`);
     }
-    report.places = await ev('CABIN.checkPlaces()');
-    for (const p of report.places) if (!p.floorOk || !p.clear) fail(`walk-to spot ${p.id}: ground ${p.ground}, floorOk ${p.floorOk}, clear ${p.clear}`);
-    console.log(`places checked: ${report.places.length}`);
+    await ev(`(CABIN.setOption('furniture', true), CABIN.setOption('car', true), true)`);
+    { // the toggles really remove meshes and colliders
+      const on = await ev('CABIN.counts'); await ev(`(CABIN.setOption('furniture', false), CABIN.setOption('car', false), true)`); const off = await ev('CABIN.counts');
+      await ev(`(CABIN.setOption('furniture', true), CABIN.setOption('car', true), true)`); const back = await ev('CABIN.counts');
+      console.log(`toggles: visible meshes ${on.visible} → ${off.visible} → ${back.visible}, colliders off ${on.optOff} → ${off.optOff} → ${back.optOff}, night lights ${on.lights}`);
+      if (!(off.visible < on.visible && back.visible === on.visible && off.optOff > 0 && back.optOff === 0)) fail('furniture / car toggles did not switch meshes and colliders');
+    }
   }
   if (only.has('modes')) {
     await ev(`CABIN.view('aerial', {instant:true})`);
@@ -148,26 +160,47 @@ try {
     await ev(`(CABIN.setView('orbit'), CABIN.setLabels(false), document.querySelector('#info').hidden = true, true)`);
   }
   if (only.has('photo')) {
+    // --pplan "day:p03,living;night:p03,living;dusk:p01" — time of day, then views (VIEWS ids) or walk-to places
     const target = +opt('--spp', argv.includes('--gpu') ? 400 : 4);
+    const plan = opt('--pplan', 'day:p03,living,stair;night:p03,living,suite,gathering,terrace;dusk:p01').split(';').map((seg) => { const [t, v] = seg.split(':'); return [t, v.split(',')]; });
     const waitSamples = async (label) => {
-      const t0 = Date.now(); while (Date.now() - t0 < 240000) { if (await ev('CABIN.photo.active') && await ev('CABIN.photo.samples') >= target) break; await sleep(1000); }
-      await sleep(1200); const n = await ev('CABIN.photo.samples'); console.log(`photo ${label}: ${n} samples in ${((Date.now() - t0) / 1000).toFixed(0)} s · stats ${JSON.stringify(await ev('CABIN.photo.stats'))} · exposure ${await ev('CABIN.photo.exposure')}`);
+      const t0 = Date.now(); while (Date.now() - t0 < 300000) { if (await ev('CABIN.photo.active') && await ev('CABIN.photo.samples') >= target) break; await sleep(1000); }
+      await sleep(1200); const n = await ev('CABIN.photo.samples');
+      const st = await ev('CABIN.photo.stats');
+      console.log(`photo ${label}: ${n} samples in ${((Date.now() - t0) / 1000).toFixed(0)} s · stats ${JSON.stringify(st)} · exposure ${await ev('CABIN.photo.exposure')} · lights ${await ev('CABIN.photo.lights')}`);
       if (n < Math.min(target, 2)) fail(`photo mode did not render (${label}): ${n} samples`);
+      return st;
     };
-    const look = `JSON.stringify({ tm: CABIN.renderer.toneMapping, exp: CABIN.renderer.toneMappingExposure, env: CABIN.scene.environment?.uuid, bg: CABIN.scene.background?.uuid ?? null, fog: !!CABIN.scene.fog, labels: CABIN.state.labels })`;
+    const resetWait = async () => { const t0 = Date.now(); await sleep(400); while (Date.now() - t0 < 15000 && await ev('CABIN.photo.samples') >= target) await sleep(200); };
+    const look = `JSON.stringify({ tm: CABIN.renderer.toneMapping, exp: CABIN.renderer.toneMappingExposure, env: CABIN.scene.environment?.uuid, bg: CABIN.scene.background?.uuid ?? null, fog: !!CABIN.scene.fog, labels: CABIN.state.labels, night: CABIN.scene.getObjectByName('nightLights').visible })`;
     await ev(`(CABIN.setView('orbit'), CABIN.setLabels(true), CABIN.setMode('real'), true)`);
     const before = await ev(look);
     await ev(`(CABIN.setView('orbit'), document.querySelector('#info').hidden = true, CABIN.view('p03',{instant:true}), CABIN.setMode('photo'), true)`);
     await sleep(500); await ev(`(CABIN.setMode('photo'), true)`); // a second click must not corrupt the saved state
-    await waitSamples('p03'); report.shots.push(await shot('g-photo-p03'));
-    const resetWait = async () => { const t0 = Date.now(); await sleep(400); while (Date.now() - t0 < 15000 && await ev('CABIN.photo.samples') >= target) await sleep(200); };
-    for (const id of opt('--pviews', 'living,stair,suite,terrace').split(',')) { await ev(`(CABIN.goTo('${id}'), true)`); await resetWait(); await waitSamples(id); report.shots.push(await shot('g-photo-' + id));
-      if (id === 'lakeside') { await ev(`(CABIN.view('lakeOut',{instant:true}), true)`); await resetWait(); await waitSamples('lake'); report.shots.push(await shot('g-photo-lake')); } }
-    await ev(`(CABIN.setView('orbit'), CABIN.view('p01',{instant:true}), true)`); await resetWait(); await waitSamples('p01'); report.shots.push(await shot('g-photo-p01'));
+    const go = (id) => id === 'fire' ? `(CABIN.walkAt(14.5, -5.5, -0.15, 41 * Math.PI / 180), CABIN.look(41, -9), true)` : id === 'sky' ? `(CABIN.goTo('lakeside'), CABIN.look(-60, 38), true)` : id === 'lakeOut' || /^p0|aerial|elev/.test(id) ? `(CABIN.setView('orbit'), CABIN.view('${id}',{instant:true}), true)` : `(CABIN.goTo('${id}'), true)`;
+    let first = true;
+    for (const [time, views] of plan) {
+      await ev(`(CABIN.photo.setTime('${time}'), true)`);
+      for (const id of views) {
+        await ev(go(id)); if (!first) await resetWait(); first = false;
+        await waitSamples(`${time} ${id}`); report.shots.push(await shot(`g-photo-${time}-${id}`));
+      }
+    }
+    { // furniture toggle inside photo mode rebuilds the traced scene and keeps rendering
+      await ev(`(CABIN.setOption('furniture', false), true)`); await sleep(500); await resetWait(); await waitSamples('furniture off (rebuilt)');
+      report.shots.push(await shot('g-photo-furniture-off'));
+      await ev(`(CABIN.setOption('furniture', true), true)`); await sleep(500); await resetWait(); await waitSamples('furniture back on');
+    }
+    if (argv.includes('--rebuild-check')) { // time changes must match a full rebuild
+      const a = await ev('CABIN.photo.stats'); await ev(`(CABIN.photo.rebuild(), true)`); await resetWait(); const b = await waitSamples('after full rebuild');
+      const d = Math.abs(a[0] - b[0]) / Math.max(a[0], 1e-6); console.log(`rebuild check: log-average ${a[0]} vs ${b[0]} (${(d * 100).toFixed(1)}%)`);
+      if (d > 0.12) fail(`switching time of day differs from a full rebuild: ${a[0]} vs ${b[0]}`);
+    }
     await ev(`CABIN.setMode('real')`);
     const after = await ev(look); if (after !== before) fail(`leaving photo mode did not restore the raster look: ${before} → ${after}`);
     const f0 = await ev('CABIN.frames'); await ev('CABIN.look(0,-4) || true'); await sleep(3000); if (!(await ev('CABIN.frames') > f0)) fail('render loop stopped after leaving photo mode');
     if (await ev('CABIN.state.mode') !== 'real') fail('could not leave photo mode');
+    await ev(`(CABIN.photo.setTime('day'), true)`);
   }
   if (only.has('info')) {
     await ev(`(CABIN.setMode('real'), CABIN.setView('orbit'), CABIN.view('aerial',{instant:true}), true)`);

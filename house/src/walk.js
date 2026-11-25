@@ -26,7 +26,7 @@ export function makeWalker({ colliders, surfaces, bounds }) {
     for (let it = 0; it < 4; it++) {
       let any = false;
       for (const c of colliders) {
-        if (c.y1 <= p.y + B0 || c.y0 >= p.y + B1) continue;
+        if (c.off || c.y1 <= p.y + B0 || c.y0 >= p.y + B1) continue;
         if (p.x < c.x0 - R || p.x > c.x1 + R || p.z < c.z0 - R || p.z > c.z1 + R) continue;
         const cx = Math.max(c.x0, Math.min(p.x, c.x1)), cz = Math.max(c.z0, Math.min(p.z, c.z1));
         const dx = p.x - cx, dz = p.z - cz, d2 = dx * dx + dz * dz;

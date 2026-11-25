@@ -2,9 +2,10 @@
 // bounced light indoors, soft sun shadows, thin reflective glass, reflective water. While the camera moves you see a
 // fast low-resolution preview; when it stops the frame converges.
 import * as THREE from 'three';
-import { WebGLPathTracer, DenoiseMaterial } from 'three-gpu-pathtracer';
+import { WebGLPathTracer, DenoiseMaterial, PhysicalSpotLight } from 'three-gpu-pathtracer';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { kelvin } from './kit.js';
 
 // time of day 0…1: sunrise in the east → noon in the south → sunset in the west (plan: x east, z south)
 export function sunDirection(t) {
@@ -48,6 +49,68 @@ export function makeSky(sunDir, W = 1024, H = 512) {
   return tex;
 }
 
+// dusk (blue hour, sun ~6° below the western horizon) and night (moon, stars) skies, same conventions as makeSky
+export function makeTwilightSky(kind) {
+  const night = kind === 'night', W = night ? 2048 : 1024, H = W / 2, data = new Float32Array(W * H * 4);
+  const sun = sunDirection(0.92).setY(0).normalize();                  // azimuth of the set sun (west, a touch south)
+  const moon = new THREE.Vector3(0.42, Math.sin(34 * Math.PI / 180), 0.78).normalize();
+  const zen = night ? [0.0011, 0.0017, 0.0040] : [0.010, 0.017, 0.044];
+  const hor = night ? [0.0026, 0.0031, 0.0047] : [0.034, 0.034, 0.050];
+  const glow = night ? [0.0012, 0.0010, 0.0010] : [0.15, 0.06, 0.018], belt = night ? [0, 0, 0] : [0.03, 0.02, 0.03];
+  const gnd = night ? [0.0007, 0.0007, 0.0008] : [0.006, 0.006, 0.007];
+  const mr = 0.6 * Math.PI / 180, cosMr = Math.cos(mr), disk = []; let omega = 0;
+  for (let j = 0; j < H; j++) {
+    const e = ((j + 0.5) / H - 0.5) * Math.PI, ce = Math.cos(e), dOmega = (2 * Math.PI / W) * (Math.PI / H) * ce;
+    for (let i = 0; i < W; i++) {
+      const phi = ((i + 0.5) / W - 0.5) * 2 * Math.PI, dx = Math.cos(phi) * ce, dy = Math.sin(e), dz = Math.sin(phi) * ce, k = (j * W + i) * 4;
+      let r, g, b;
+      if (e < 0) { const f = Math.min(1, -e * 5); r = hor[0] * (1 - f) + gnd[0] * f; g = hor[1] * (1 - f) + gnd[1] * f; b = hor[2] * (1 - f) + gnd[2] * f; }
+      else {
+        const t = Math.pow(1 - e / (Math.PI / 2), 3.0);
+        r = zen[0] + (hor[0] - zen[0]) * t; g = zen[1] + (hor[1] - zen[1]) * t; b = zen[2] + (hor[2] - zen[2]) * t;
+        const ca = (dx * sun.x + dz * sun.z) / Math.max(ce, 1e-4), low = Math.exp(-e / 0.16);
+        const w = Math.pow(Math.max(ca, 0), 3) * low, v = Math.pow(Math.max(-ca, 0), 2) * Math.exp(-Math.abs(e - 0.12) / 0.1);
+        r += glow[0] * w + belt[0] * v; g += glow[1] * w + belt[1] * v; b += glow[2] * w + belt[2] * v;
+      }
+      data[k] = r; data[k + 1] = g; data[k + 2] = b; data[k + 3] = 1;
+      if (night && dx * moon.x + dy * moon.y + dz * moon.z > cosMr) { disk.push(k); omega += dOmega; }
+    }
+  }
+  if (night) {
+    const L = 0.045 / Math.max(omega, 1e-6);                            // moonlight irradiance 0.045 (sunlight ≈ 3.4)
+    for (const k of disk) { data[k] += 0.82 * L; data[k + 1] += 0.88 * L; data[k + 2] += 1.0 * L; }
+    let seed = 7; const R = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let n = 0; n < 1500; n++) {                                     // stars: single faint texels (a texel spans a few pixels, so keep them dim)
+      const u = R(), v = 0.5 + 0.5 * Math.asin(0.15 + 0.85 * R()) / (Math.PI / 2) * 0.999, k = ((Math.floor(v * H) * W) + Math.floor(u * W)) * 4;
+      const m = Math.pow(R(), 9) * 0.09 + 0.004, tint = R();
+      data[k] += m * (0.85 + 0.15 * tint); data[k + 1] += m * 0.92; data[k + 2] += m * (1.1 - 0.2 * tint);
+    }
+  }
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.FloatType);
+  tex.mapping = THREE.EquirectangularReflectionMapping; tex.colorSpace = THREE.LinearSRGBColorSpace;
+  tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.needsUpdate = true;
+  return tex;
+}
+
+// night lights from furniture.js specs. Layer 5: the path tracer finds them (it walks visible objects), the raster
+// preview does not (its camera only renders layer 0), so lighting stays shadowed and shaders never recompile.
+const WHITE = new THREE.Color(1, 1, 1);
+export const balanced = (K, keep = 0.55) => kelvin(K).lerp(WHITE, 1 - keep);
+export function makeNightLights(specs) {
+  const g = new THREE.Group(); g.name = 'nightLights'; g.visible = false;
+  for (const sp of specs) {
+    let l;
+    if (sp.type === 'spot') {
+      l = new PhysicalSpotLight(balanced(sp.K), sp.I, 0, sp.angle, sp.penumbra, 2); l.radius = sp.radius;
+      l.target.position.set(...sp.to); g.add(l.target);
+    } else l = new THREE.PointLight(balanced(sp.K, sp.K < 2200 ? 0.85 : 0.55), sp.I, 0, 2);
+    l.position.set(...sp.at); l.layers.set(5); l.castShadow = false;
+    l.userData = { level: sp.level, opt: sp.opt, type: sp.type };
+    g.add(l);
+  }
+  return g;
+}
+
 // InstancedMesh → plain merged meshes (the path tracer flattens meshes but does not expand instances).
 // Instance tints are kept as three shade buckets.
 function flattenInstances(group) {
@@ -73,8 +136,8 @@ function flattenInstances(group) {
   return out;
 }
 
-export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house }) {
-  let pt = null, forest = null, skyTex = null, active = false, sunT = 0.78, maxSamples = 3000, saved = {};
+export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house, nightLights, lightOn = () => true }) {
+  let pt = null, forest = null, skyTex = null, active = false, sunT = 0.78, maxSamples = 3000, saved = {}, time = 'day';
   // window panes as thin glass (thickness 0 = thin film in the path tracer: transmits and reflects, no offset)
   const glass = new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 0, roughness: 0.0, transmission: 1, ior: 1.5, thickness: 0, side: THREE.DoubleSide });
   const water = new THREE.MeshPhysicalMaterial({ color: 0x0b2733, metalness: 0, roughness: 0.04, ior: 1.33 });
@@ -82,6 +145,33 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
   // standing-seam panels, trim, columns and the garage door are painted: a dielectric coat, not bare metal
   for (const [k, rough] of [['roof', 0.64], ['metal', 0.5], ['trim', 0.4], ['column', 0.4], ['soffit', 0.55], ['garage', 0.45]]) {
     const m = M[k].clone(); m.metalness = 0; m.roughness = rough; swaps[k] = m;
+  }
+  // light fittings: translucent shades and opal globes let the lamp inside light the room (shadow rays pass through
+  // transmissive surfaces); at dusk / night they and the fixture faces, embers and flames glow
+  const warm = balanced(2700), fireCol = kelvin(1700);
+  swaps.shade = new THREE.MeshPhysicalMaterial({ color: 0xf2ebdf, roughness: 1, transmission: 0.6, thickness: 0, side: THREE.DoubleSide, emissive: warm });
+  swaps.globe = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.45, transmission: 0.92, thickness: 0, emissive: warm });
+  swaps.lamp = new THREE.MeshStandardMaterial({ color: 0xf7f5f0, roughness: 0.4, emissive: warm });
+  swaps.ember = new THREE.MeshStandardMaterial({ color: 0x2a1a12, roughness: 0.9, emissive: kelvin(1300) });
+  // flames: hot yellow at the base → orange → red tips that fade out (lathe UVs run base → tip)
+  const grad = (stops) => { const c = document.createElement('canvas'); c.width = 4; c.height = 64; const g = c.getContext('2d'), lg = g.createLinearGradient(0, 64, 0, 0);
+    for (const [t, col] of stops) lg.addColorStop(t, col); g.fillStyle = lg; g.fillRect(0, 0, 4, 64); const t = new THREE.CanvasTexture(c); return t; };
+  const flameCol = grad([[0, '#fff1c4'], [0.3, '#ffb347'], [0.65, '#ff6a1a'], [1, '#8a1c00']]); flameCol.colorSpace = THREE.SRGBColorSpace;
+  const flameA = grad([[0, '#ffffff'], [0.55, '#ffffff'], [1, '#000000']]);
+  swaps.flame = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 1, transmission: 1, thickness: 0, transparent: true, opacity: 0, emissive: 0xffffff, emissiveMap: flameCol, alphaMap: flameA, side: THREE.DoubleSide });
+  const GLOW = { shade: 0.05, globe: 0.1, lamp: 0.9, ember: 1.1, flame: 0.9 };
+  function applyGlow() {
+    const on = time !== 'day';
+    for (const [k, v] of Object.entries(GLOW)) swaps[k].emissiveIntensity = on ? v : 0;
+    swaps.flame.opacity = on ? 1 : 0;
+  }
+  applyGlow();
+  // night lights: visible to the path tracer only (layer 5 keeps them out of the raster preview)
+  function applyLights() {
+    const on = active && time !== 'day';
+    let changed = nightLights.visible !== on; nightLights.visible = on;
+    for (const l of nightLights.children) if (l.isLight) { const v = on && lightOn(l); if (l.visible !== v) { l.visible = v; changed = true; } }
+    return changed;
   }
 
   // exposure meter: copy the accumulated (linear HDR) frame to a tiny float target and log-average its luminance
@@ -101,21 +191,41 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     // early frames: an edge-aware denoise blended over the raw image, fading out as samples accumulate
     const den = new DenoiseMaterial(); den.transparent = true; den.blending = THREE.NormalBlending;
     const denQuad = new FullScreenQuad(den), FADE = 300;
+    // despeckle: a pixel far brighter than all eight neighbours is a firefly (a bounce ray that happened to hit a lamp
+    // or a lit shade); show the neighbours' average there instead. Multi-pixel highlights (lamps, stars) are kept.
+    const spk = new FullScreenQuad(new THREE.ShaderMaterial({
+      uniforms: { map: { value: null }, texel: { value: new THREE.Vector2() } }, transparent: true, depthTest: false, depthWrite: false,
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `uniform sampler2D map; uniform vec2 texel; varying vec2 vUv;
+        float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+        void main() {
+          vec3 c = texture2D(map, vUv).rgb; float lc = lum(c), mx = 0.0; vec3 sum = vec3(0.0);
+          for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) { if (i == 0 && j == 0) continue;
+            vec3 q = texture2D(map, vUv + vec2(float(i), float(j)) * texel).rgb; mx = max(mx, lum(q)); sum += q; }
+          if (lc < mx * 2.2 + 0.002) discard;
+          gl_FragColor = vec4(sum / 8.0, 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+    }));
     pt.renderToCanvasCallback = (target, r, quad) => {
       const ac = r.autoClear; r.autoClear = false;
       quad.render(r);
       const n = pt.samples;
-      if (n < FADE && quad.material.opacity >= 1) {
-        const k = 1 - n / FADE;
-        den.uniforms.map.value = target.texture; den.uniforms.sigma.value = 2.5 + 3.5 * k; den.uniforms.threshold.value = 0.04 + 0.08 * k; den.uniforms.kSigma.value = 1;
-        den.uniforms.opacity.value = Math.min(1, k * 1.25); denQuad.render(r);
+      if (quad.material.opacity >= 1) {
+        if (n < FADE) {
+          const k = 1 - n / FADE;
+          den.uniforms.map.value = target.texture; den.uniforms.sigma.value = 2.5 + 3.5 * k; den.uniforms.threshold.value = 0.04 + 0.08 * k; den.uniforms.kSigma.value = 1;
+          den.uniforms.opacity.value = Math.min(1, k * 1.25); denQuad.render(r);
+        }
+        spk.material.uniforms.map.value = target.texture; spk.material.uniforms.texel.value.set(1 / target.width, 1 / target.height); spk.render(r);
       }
       r.autoClear = ac;
     };
     forest = flattenInstances(site); forest.visible = false; site.add(forest);
   }
   function applySky() {
-    skyTex?.dispose(); skyTex = makeSky(sunDirection(sunT));
+    skyTex?.dispose(); skyTex = time === 'day' ? makeSky(sunDirection(sunT)) : makeTwilightSky(time);
     scene.background = skyTex; scene.environment = skyTex;
   }
   function setVisibility(on) {
@@ -131,24 +241,37 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     get samples() { return pt ? Math.floor(pt.samples) : 0; },
     get maxSamples() { return maxSamples; },
     get sun() { return sunT; },
+    get time() { return time; },
+    get glow() { return Object.fromEntries(Object.keys(GLOW).map((k) => [k, swaps[k].emissiveIntensity])); },
+    get nightVisible() { return nightLights.visible; },
+    get lightCount() { return nightLights.visible ? nightLights.children.filter((l) => l.isLight && l.visible).length : 0; },
     enter() { // returns after the scene has been prepared (BVH, textures)
       if (active) return;
       init();
       saved = { tm: renderer.toneMapping, exp: renderer.toneMappingExposure, env: scene.environment, bg: scene.background, fog: scene.fog };
       active = true; scene.fog = null;
       renderer.toneMapping = THREE.AgXToneMapping;
-      applySky(); setVisibility(true);
+      applySky(); setVisibility(true); applyGlow(); applyLights();
       pt.setScene(scene, camera);
     },
     exit() {
       if (!active) return;
-      active = false; setVisibility(false);
+      active = false; setVisibility(false); applyLights();
       renderer.toneMapping = saved.tm; renderer.toneMappingExposure = saved.exp;
       scene.environment = saved.env; scene.background = saved.bg; scene.fog = saved.fog;
     },
     rebuild() { if (active) pt.setScene(scene, camera); },           // after a cutaway change
     cameraMoved() { if (active) pt.updateCamera(); },
-    setSun(t) { sunT = t; if (active) { applySky(); pt.updateEnvironment(); } },
+    setSun(t) { sunT = t; if (active && time === 'day') { applySky(); pt.updateEnvironment(); } },
+    // day / dusk / night: new sky, glow on or off, lights on or off — no scene rebuild needed
+    setTime(t) {
+      if (!['day', 'dusk', 'night'].includes(t)) return false;
+      time = t; applyGlow();
+      if (active) { applySky(); applyLights(); pt.updateEnvironment(); pt.updateMaterials(); pt.updateLights(); }
+      return true;
+    },
+    // re-evaluate which night lights are on (cutaway, furniture toggle, where the camera is)
+    refreshLights() { if (active && applyLights()) pt.updateLights(); },
     render() { if (active && pt.samples < maxSamples) pt.renderSample(); },
     meter() {
       if (!active) return 0;

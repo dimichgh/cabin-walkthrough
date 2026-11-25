@@ -14,7 +14,7 @@ export const PLACES = [
     note: 'The lake lies west of the cabin on the site plan. This is the face with the long ribbon window, drawn on 3/A401, which is titled EXTERIOR ELEVATION – EAST. The A201 north arrow and the A401 titles disagree; this model follows the north arrow, which the site plan and the building section also support.', walk: { x: -42, z: 6, y: GRADE, yaw: -90 * D } },
 
   // basement (1/A201)
-  { id: 'gathering', level: 'B', title: 'Gathering 001', pos: [18, FFB + 4.5, 25], node: 'gathering', placement: 'drawn', walk: { x: 18, z: 27, y: FFB, yaw: 0 } },
+  { id: 'gathering', level: 'B', title: 'Gathering 001', pos: [18, FFB + 4.5, 25], node: 'gathering', placement: 'drawn', walk: { x: 18, z: 27, y: FFB, yaw: 85 * D } },
   { id: 'laundry', level: 'B', title: 'Laundry 002', pos: [23, FFB + 4.5, 5], node: 'laundry', placement: 'drawn', walk: { x: 23.5, z: 7.0, y: FFB, yaw: 0 } },
   { id: 'mech', level: 'B', title: 'Mechanical 003', pos: [4, FFB + 4.5, 6], node: 'mech', placement: 'drawn', walk: { x: 4.6, z: 14.5, y: FFB, yaw: 0 } },
   { id: 'egress', level: 'B', title: 'Egress window 0.1', pos: [3.6, FFB + 6.5, 24.4], node: 'lightwells', placement: 'drawn' },
@@ -26,7 +26,7 @@ export const PLACES = [
   { id: 'stair', level: '1', title: 'Stair · steel plate wall', pos: [15, 6, 11], node: 'stair', placement: 'drawn',
     note: 'Two stacked straight flights, 18 risers each, both rising west, beside the two-storey ST-1 steel plate wall (A201 stair note, building section).', walk: { x: 25.5, z: 11, y: FF1, yaw: 90 * D } },
   { id: 'guest', level: '1', title: 'Ground-floor rooms', pos: [14, 5, 24], node: 'guest', placement: 'schematic',
-    note: 'The first-floor plan was not published. The article places guest bedrooms here; this model leaves the floor open rather than invent walls.', walk: { x: 14, z: 23, y: FF1, yaw: 90 * D } },
+    note: 'The first-floor plan was not published. The article places guest bedrooms here; this model leaves the floor open rather than invent walls. The bed and lamps (Furniture, F) are illustrative only.', walk: { x: 14, z: 23, y: FF1, yaw: 90 * D } },
   { id: 'terrace', level: '1', title: 'Covered terrace', pos: [16, 4, -8], node: 'terrace', placement: 'drawn', walk: { x: 18, z: -3, y: TERR, yaw: 0 } },
   { id: 'fireplace', level: '1', title: 'Outdoor fireplace', pos: [7, 6.5, -15.2], node: 'fireplace', placement: 'drawn' },
   { id: 'garage', level: '1', title: 'Garage · door 111A', pos: [47, 4, 20], node: 'garage', placement: 'drawn', walk: { x: 42, z: 21, y: FFG, yaw: -90 * D } },
@@ -41,10 +41,10 @@ export const PLACES = [
     note: 'The 2/A501 cut shows mechanical in the middle and the pantry on the east side, between the screened patio and the garage side.' },
   { id: 'powder', level: '2', title: 'Upper powder', pos: [21.6, FF2 + 4.5, 11], node: 'stair', placement: 'drawn', note: 'An upper powder room sits beside the stair (1/A501).' },
   { id: 'rooms2', level: '2', title: 'Rooms 201 · 203', pos: [12, FF2 + 4.5, 24], placement: 'schematic',
-    note: 'Doors 201 and 203 are tagged on the sheets, but the second-floor plan was not published, so this end is left open.', walk: { x: 12, z: 20, y: FF2, yaw: 180 * D } },
+    note: 'Doors 201 and 203 are tagged on the sheets, but the second-floor plan was not published, so this end is left open. The bedroom and study furniture (Furniture, F) is illustrative only.', walk: { x: 12, z: 20, y: FF2, yaw: 180 * D } },
   { id: 'gallery', level: '2', title: 'Gallery', pos: [31, FF2 + 4.5, 19], node: 'gallery', placement: 'drawn', walk: { x: 31, z: 13.5, y: FF2, yaw: 180 * D } },
   { id: 'suite', level: '2', title: 'Apartment suite', pos: [47, FF2 + 4.5, 21], node: 'suite', placement: 'schematic',
-    note: 'Over the garage. The kitchenette wall sits under the big north window (building section); bath, shower and closets are on the sheets but their plan positions were not published.', walk: { x: 45, z: 25, y: FF2, yaw: 0 } },
+    note: 'Over the garage. The kitchenette wall sits under the big north window (building section); bath, shower and closets are on the sheets but their plan positions were not published. The furniture is illustrative.', walk: { x: 45, z: 25, y: FF2, yaw: 0 } },
   { id: 'ribbon', level: '2', title: 'Ribbon window', pos: [-2.5, 16.5, 6], node: 'windows', placement: 'drawn' },
   { id: 'metal', level: '2', title: 'Metal panel walls', pos: [29.2, 13, -9], node: 'upper_wall', placement: 'drawn' },
 

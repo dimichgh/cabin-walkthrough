@@ -426,9 +426,7 @@ export function buildHouse(M) {
   box('walnut', '2', 25.4, 27.7, FF2, FF2 + 2.9, -5.0, 5.0, { solid: true }); box('quartz', '2', 25.3, 27.7, FF2 + 2.9, FF2 + 3.05, -5.0, 5.0);
   box('walnut', '2', 25.0, 27.7, FF2, FF2 + 7.2, 5.0, 7.8, { solid: true });
   box('walnut', '2', 18.8, 21.8, FF2, FF2 + 2.9, -3.0, 3.0, { solid: true }); box('quartz', '2', 18.6, 22.0, FF2 + 2.9, FF2 + 3.05, -3.2, 3.2);
-  // sofa facing the ribbon window, low table, rug (furniture is illustrative, for scale)
-  box('fabric', '2', 8.6, 11.2, FF2, FF2 + 1.5, -2.0, 5.0, { solid: true }); box('fabric', '2', 10.4, 11.2, FF2 + 1.5, FF2 + 2.7, -2.0, 5.0);
-  box('walnut', '2', 5.0, 7.2, FF2, FF2 + 1.3, -0.5, 3.5, { solid: true }); box('rug', '2', 3.0, 12.5, FF2, FF2 + 0.03, -3.5, 6.5);
+  // (living furniture is in furniture.js, switchable)
 
   /* ═════════════ GALLERY + SUITE over the garage ═════════════ */
   const GX0 = BX1, CZ0 = 8.57, CZ1 = 32.125, SX0 = 34.0, SX1 = 59.8;
