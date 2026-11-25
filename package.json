@@ -1,0 +1,16 @@
+{
+  "name": "cabin-walkthrough",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Walkable 3D model of a lakefront cabin, rebuilt from its published construction drawings. One self-contained HTML file.",
+  "type": "module",
+  "scripts": {
+    "build": "node house/build.mjs --out docs/index.html",
+    "test": "node house/test.mjs",
+    "test:file": "node house/test.mjs --file"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0",
+    "three": "0.160.0"
+  }
+}

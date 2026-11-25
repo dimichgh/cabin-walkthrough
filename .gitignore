@@ -1,0 +1,6 @@
+node_modules/
+dist/
+house/dist/
+house/.shots/
+house/src/info.js
+.DS_Store

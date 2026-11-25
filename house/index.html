@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Cabin · walkable model</title>
+<meta name="description" content="A walkable 3D model of a lakefront cabin, rebuilt from its published construction drawings. Real materials, X-ray and hologram views.">
+<style>
+  :root { --ink: #1c2329; --mute: #5d6872; --line: rgba(28, 35, 41, .12); --panel: rgba(250, 250, 248, .86); --acc: #b4532a; --on: #1c2329; --onInk: #fff; }
+  body[data-mode="holo"] { --ink: #d9fbff; --mute: #7fb6c2; --line: rgba(127, 246, 255, .22); --panel: rgba(4, 18, 30, .78); --acc: #4fe3ff; --on: #4fe3ff; --onInk: #021018; }
+  body[data-mode="xray"] { --acc: #2c5d8f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #dfe6ec; color: var(--ink);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+  .panel { background: var(--panel); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, .12); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  #title { position: fixed; left: 16px; top: 14px; padding: 10px 14px; width: 214px; }
+  #title .k { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); }
+  #title h1 { margin: 2px 0 2px; font-size: 22px; letter-spacing: -.01em; font-weight: 650; }
+  #title p { margin: 0; color: var(--mute); font-size: 12px; }
+  #bar { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; padding: 6px; flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 380px); }
+  .seg { display: flex; background: rgba(127, 127, 127, .1); border-radius: 9px; padding: 2px; }
+  .seg button { border: 0; background: none; padding: 6px 11px; border-radius: 7px; font-weight: 550; white-space: nowrap; }
+  .seg button.on { background: var(--on); color: var(--onInk); }
+  .seg button:not(.on):hover { background: rgba(127, 127, 127, .14); }
+  .tog { border: 1px solid var(--line); background: none; border-radius: 8px; padding: 5px 10px; font-weight: 550; }
+  .tog.on { background: var(--on); color: var(--onInk); border-color: transparent; }
+  .cut { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-weight: 550; }
+  .cut input[type=range] { width: 96px; accent-color: var(--acc); }
+  .cut output { min-width: 44px; color: var(--mute); font-variant-numeric: tabular-nums; }
+  #side { position: fixed; left: 16px; top: 128px; bottom: 16px; width: 214px; padding: 10px; overflow: auto; }
+  #side h3 { margin: 2px 4px 6px; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); font-weight: 600; }
+  .grp { margin: 10px 4px 3px; font-weight: 650; font-size: 12px; }
+  .place { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 5px 8px; border-radius: 7px; }
+  .place:hover { background: rgba(127, 127, 127, .14); }
+  .place i { color: var(--mute); font-style: normal; font-size: 11px; }
+  .views { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 4px 0 6px; }
+  .views button { border: 1px solid var(--line); background: none; border-radius: 7px; padding: 4px 6px; font-size: 12px; }
+  .views button:hover { background: rgba(127, 127, 127, .14); }
+  #info { position: fixed; right: 16px; top: 72px; width: 340px; max-height: calc(100vh - 100px); overflow: auto; padding: 14px 16px 16px; }
+  #info[hidden] { display: none; }
+  #info .x { position: absolute; right: 8px; top: 6px; border: 0; background: none; font-size: 20px; color: var(--mute); }
+  #info h2 { margin: 8px 0 2px; font-size: 17px; line-height: 1.25; padding-right: 18px; }
+  #info .tagline { color: var(--acc); font-weight: 600; margin-bottom: 8px; }
+  #info .note { margin: 0 0 8px; }
+  #info .role { margin: 0 0 8px; color: var(--mute); }
+  #info .facts { margin: 6px 0 8px; padding-left: 17px; } #info .facts li { margin: 3px 0; }
+  #info .where { color: var(--mute); font-size: 11.5px; }
+  .pill { display: inline-block; font-size: 10.5px; font-weight: 650; padding: 2px 7px; border-radius: 99px; margin-right: 5px; background: rgba(127, 127, 127, .14); }
+  .pill.drawn { background: #dcefe0; color: #24603a; } .pill.schematic { background: #f6e7cf; color: #8a5414; }
+  body[data-mode="holo"] .pill.drawn { background: rgba(60, 220, 160, .18); color: #7ff0c4; } body[data-mode="holo"] .pill.schematic { background: rgba(255, 190, 90, .16); color: #ffcf8a; }
+  .walkhere { margin-top: 6px; border: 0; background: var(--on); color: var(--onInk); padding: 7px 12px; border-radius: 8px; font-weight: 600; }
+  #tags { position: fixed; inset: 0; pointer-events: none; }
+  .tag { position: absolute; left: 0; top: 0; pointer-events: auto; display: flex; align-items: center; gap: 6px; white-space: nowrap; border: 0;
+    background: rgba(255, 255, 255, .9); color: #1c2329; font-size: 12px; font-weight: 600; padding: 4px 9px 4px 7px; border-radius: 99px; box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+  .tag .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc); flex: none; }
+  .tag[data-lv="B"] .dot { background: #6b5bd2; } .tag[data-lv="2"] .dot { background: #2f8f6b; } .tag[data-lv="R"] .dot { background: #59626b; } .tag[data-lv="site"] .dot { background: #3b82c4; }
+  body[data-mode="holo"] .tag { background: rgba(3, 24, 36, .82); color: #cffaff; box-shadow: 0 0 0 1px rgba(127, 246, 255, .35); }
+  #compass { position: fixed; right: 22px; bottom: 22px; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; }
+  #compass b { position: absolute; top: 3px; font-size: 11px; color: var(--acc); }
+  #compass i { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 16px solid var(--acc); transform: translateY(-4px); }
+  #hud { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 7px 14px; color: var(--mute); font-size: 12px; text-align: center; }
+  #hud b { color: var(--ink); }
+  #where { display: none; font-weight: 650; color: var(--ink); }
+  body[data-view="walk"] #where { display: block; }
+  .ow { display: none; } body[data-view="walk"] .ow { display: inline; } body[data-view="walk"] .oo { display: none; }
+  #cross { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: rgba(255, 255, 255, .85); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); display: none; pointer-events: none; }
+  body[data-view="walk"] #cross { display: block; }
+  #helpBtn { position: fixed; right: 80px; bottom: 26px; width: 34px; height: 34px; border-radius: 50%; font-weight: 700; }
+  #help { position: fixed; right: 16px; bottom: 76px; width: 330px; padding: 12px 14px; display: none; }
+  #help.open { display: block; } #help h4 { margin: 0 0 6px; } #help p { margin: 4px 0; color: var(--mute); } #help kbd { font: 600 11px ui-monospace, Menlo, monospace; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); }
+  #boot { position: fixed; inset: 0; display: grid; place-items: center; font-size: 14px; color: #5d6872; background: #e9eef0; }
+  @media (max-width: 900px) {
+    #title { max-width: 60vw; padding: 8px 12px; } #title p, #title .k { display: none; } #title h1 { font-size: 17px; }
+    #bar { top: auto; bottom: 64px; max-width: calc(100vw - 16px); } #side { display: none; } #info { left: 8px; right: 8px; width: auto; top: auto; bottom: 120px; max-height: 45vh; }
+    #help { left: 8px; right: 8px; width: auto; }
+  }
+</style>
+</head>
+<body data-mode="real" data-view="orbit">
+<canvas id="c" tabindex="0"></canvas>
+<div id="tags"></div>
+<div id="cross"></div>
+
+<header id="title" class="panel">
+  <div class="k">Lakefront cabin · drawing study</div>
+  <h1>The Cabin</h1>
+  <p>Rebuilt from sheets A201–A908. Walk it, or see through it.</p>
+</header>
+
+<nav id="bar" class="panel">
+  <div class="seg" title="Materials (1 · 2 · 3)"><button data-mode="real" class="on">Real</button><button data-mode="xray">X-ray</button><button data-mode="holo">Holo</button></div>
+  <div class="seg" title="Orbit or walk (V)"><button data-view="orbit" class="on">Orbit</button><button data-view="walk">Walk</button></div>
+  <div class="seg" title="Cutaway"><button data-level="all" class="on">Whole</button><button data-level="roof">Roof off</button><button data-level="ground">Ground floor</button><button data-level="basement">Basement</button></div>
+  <label class="cut" title="Horizontal section: everything above this height is cut away"><input type="checkbox" id="cutOn"> Cut <input type="range" id="cutH" min="-9" max="31" step="0.5" value="5"><output id="cutVal">off</output></label>
+  <button id="labelsBtn" class="tog on" title="Labels (L)">Labels</button>
+</nav>
+
+<aside id="side" class="panel">
+  <h3>Views</h3>
+  <div class="views">
+    <button data-cam="aerial">Aerial</button><button data-cam="plan">Plan</button>
+    <button data-cam="elevLake">Lake face</button><button data-cam="elevEast">Entry face</button>
+    <button data-cam="p01">Perspective 1</button><button data-cam="p02">Perspective 2</button>
+    <button data-cam="p03">Perspective 3</button><button data-cam="p04">Perspective 4</button>
+  </div>
+  <h3>Walk to</h3>
+  <div id="placeList"></div>
+</aside>
+
+<aside id="info" class="panel" hidden>
+  <button class="x" aria-label="Close">×</button>
+  <div class="kind"></div>
+  <h2></h2>
+  <div class="tagline"></div>
+  <p class="note"></p>
+  <p class="role"></p>
+  <ul class="facts"></ul>
+  <div class="where"></div>
+  <button class="walkhere">Walk here</button>
+</aside>
+
+<div id="hud" class="panel">
+  <div id="where"></div>
+  <span class="oo">Drag to orbit · scroll to zoom · <b>double-click a floor</b> to walk from there</span>
+  <span class="ow"><b>WASD</b> move · <b>mouse</b> look (click to lock, or drag) · <b>Shift</b> run · <b>Esc</b> back to orbit</span>
+</div>
+<div id="compass" class="panel" title="Plan north"><b>N</b><i></i></div>
+<button id="helpBtn" class="panel" title="Help">?</button>
+<div id="help" class="panel">
+  <h4>How to use</h4>
+  <p><kbd>1</kbd> Real materials · <kbd>2</kbd> X-ray · <kbd>3</kbd> Hologram</p>
+  <p><kbd>V</kbd> toggle walk / orbit · <kbd>W A S D</kbd> walk · <kbd>←</kbd><kbd>→</kbd> turn · <kbd>Shift</kbd> run · <kbd>L</kbd> labels</p>
+  <p>Stairs work: walk onto them. On a phone, drag the left side to move and the right side to look.</p>
+  <p>Independent study model, not affiliated with the architects. The construction drawings were published by Bob Borson on Life of an Architect (The Cabin Project).</p>
+  <p>Green tags mean the position comes from the drawings; amber means the room is named on the sheets but its plan was not published, so the area is left open.</p>
+</div>
+<div id="boot">Loading…</div>
+<!--BUNDLE-->
+</body>
+</html>
