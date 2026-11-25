@@ -146,6 +146,9 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
   for (const [k, rough] of [['roof', 0.64], ['metal', 0.5], ['trim', 0.4], ['column', 0.4], ['soffit', 0.55], ['garage', 0.45]]) {
     const m = M[k].clone(); m.metalness = 0; m.roughness = rough; swaps[k] = m;
   }
+  // the path tracer renders clearcoat materials black, so the car's paint and glass get clearcoat-free equivalents
+  swaps.carpaint = new THREE.MeshPhysicalMaterial({ color: M.carpaint.color, metalness: 0.45, roughness: 0.22, ior: 1.5 });
+  swaps.carglass = new THREE.MeshPhysicalMaterial({ color: 0x0b0e10, metalness: 0, roughness: 0.02, ior: 1.5 });
   // light fittings: translucent shades and opal globes let the lamp inside light the room (shadow rays pass through
   // transmissive surfaces); at dusk / night they and the fixture faces, embers and flames glow
   const warm = balanced(2700), fireCol = kelvin(1700);
@@ -160,6 +163,14 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
   const flameA = grad([[0, '#ffffff'], [0.55, '#ffffff'], [1, '#000000']]);
   swaps.flame = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 1, transmission: 1, thickness: 0, transparent: true, opacity: 0, emissive: 0xffffff, emissiveMap: flameCol, alphaMap: flameA, side: THREE.DoubleSide });
   const GLOW = { shade: 0.05, globe: 0.1, lamp: 0.9, ember: 1.1, flame: 0.9 };
+  // while moving at dusk / night, the 1-sample traced preview is mostly noise: show the raster instead, lit by a dim
+  // fill (a hemisphere light, which the path tracer ignores) plus the glowing fittings, until the traced frame fades in
+  const previewFill = new THREE.HemisphereLight(0xd9dfe8, 0x3b3128, 0.0); previewFill.visible = false; scene.add(previewFill);
+  function applyPreview() {
+    const night = active && time !== 'day';
+    previewFill.visible = night; previewFill.intensity = time === 'night' ? 0.035 : 0.08;
+    if (pt) { pt.dynamicLowRes = !night; pt.rasterizeScene = true; }
+  }
   function applyGlow() {
     const on = time !== 'day';
     for (const [k, v] of Object.entries(GLOW)) swaps[k].emissiveIntensity = on ? v : 0;
@@ -251,12 +262,12 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
       saved = { tm: renderer.toneMapping, exp: renderer.toneMappingExposure, env: scene.environment, bg: scene.background, fog: scene.fog };
       active = true; scene.fog = null;
       renderer.toneMapping = THREE.AgXToneMapping;
-      applySky(); setVisibility(true); applyGlow(); applyLights();
+      applySky(); setVisibility(true); applyGlow(); applyLights(); applyPreview();
       pt.setScene(scene, camera);
     },
     exit() {
       if (!active) return;
-      active = false; setVisibility(false); applyLights();
+      active = false; setVisibility(false); applyLights(); applyPreview();
       renderer.toneMapping = saved.tm; renderer.toneMappingExposure = saved.exp;
       scene.environment = saved.env; scene.background = saved.bg; scene.fog = saved.fog;
     },
@@ -267,7 +278,7 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     setTime(t) {
       if (!['day', 'dusk', 'night'].includes(t)) return false;
       time = t; applyGlow();
-      if (active) { applySky(); applyLights(); pt.updateEnvironment(); pt.updateMaterials(); pt.updateLights(); }
+      if (active) { applySky(); applyLights(); applyPreview(); pt.updateEnvironment(); pt.updateMaterials(); pt.updateLights(); }
       return true;
     },
     // re-evaluate which night lights are on (cutaway, furniture toggle, where the camera is)

@@ -63,6 +63,8 @@ export const VIEWS = {
   p05: { pos: [-30, 78, 104], target: [24, 4, 12] },
   plan: { pos: [27, 260, 9.001], target: [27, 0, 9], up: [0, 0, -1], fov: 18 },
   elevLake: { pos: [-420, 12, 9], target: [14, 12, 9], fov: 7.5 },
+  carFront: { pos: [58.5, 5.0, 4.0], target: [71.5, 2.4, 17.0], fov: 45 }, // the car (no buttons; used by tests)
+  carRear: { pos: [91.0, 5.5, 27.0], target: [73.0, 2.4, 17.0], fov: 45 },
   lakeOut: { pos: [-40, 34, 30], target: [-420, -14, -10], fov: 55 }, // over the terrace edge toward the lake (no button; used by tests)
   elevEast: { pos: [460, 12, 9], target: [30, 12, 9], fov: 7.5 },
   section: { pos: [27, 10, 260], target: [27, 10, 10], fov: 14 },

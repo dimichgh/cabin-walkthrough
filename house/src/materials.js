@@ -251,7 +251,7 @@ export function makeMaterials() {
     ember:     S({ color: 0x2a1a12, roughness: 0.9 }),
     flame:     S({ color: 0x3a2a20, roughness: 1, transparent: true, opacity: 0 }),
     // car
-    carpaint:  new THREE.MeshPhysicalMaterial({ color: 0x24343a, metalness: 0.55, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.04 }),
+    carpaint:  new THREE.MeshPhysicalMaterial({ color: 0x6d7f88, metalness: 0.5, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.04 }),
     tire:      S({ color: 0x151515, roughness: 0.88 }),
     rim:       S({ color: 0xb4b8bc, metalness: 1, roughness: 0.28 }),
     carglass:  new THREE.MeshPhysicalMaterial({ color: 0x0b0e10, metalness: 0, roughness: 0.03, clearcoat: 1 }),

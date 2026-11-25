@@ -269,7 +269,9 @@ function goTo(id) {
 
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return; // leave browser shortcuts (copy, find…) alone
   keys.add(e.code);
+  if (e.repeat) return;
   if (e.code === 'Digit1') setMode('real'); else if (e.code === 'Digit2') setMode('xray'); else if (e.code === 'Digit3') setMode('holo');
   else if (e.code === 'KeyP') setMode(S.mode === 'photo' ? 'real' : 'photo');
   else if (e.code === 'KeyL') setLabels(!S.labels);

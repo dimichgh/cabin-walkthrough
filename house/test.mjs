@@ -159,10 +159,20 @@ try {
     console.log(`input: label "${tagged}", toolbar, walk-here, place list, W moved ${moved.toFixed(1)} ft, drag turned ${((c.walker.yaw - b.walker.yaw) * 57.3).toFixed(0)}°, keys 3/1 ok`);
     await ev(`(CABIN.setView('orbit'), CABIN.setLabels(false), document.querySelector('#info').hidden = true, true)`);
   }
+  // named camera spots for shots: VIEWS ids, walk-to places, and a few extra eye-level spots
+  const SPOTS = { fire: [14.5, -5.5, -0.15, 41, -9], dining: [12.2, 6.8, 10.354, -45, -8], pool: [19.5, 21, -10.354, -117, -12], kitchen: [17.2, 6.2, 10.354, -20, -6], study: [16, 19.5, 10.354, 160, -8], firstroom: [10.5, 6.8, 0, 120, -8] };
+  const goShot = (id) => SPOTS[id] ? `(CABIN.walkAt(${SPOTS[id][0]}, ${SPOTS[id][1]}, ${SPOTS[id][2]}, ${SPOTS[id][3]} * Math.PI / 180), CABIN.look(${SPOTS[id][3]}, ${SPOTS[id][4]}), true)`
+    : id === 'sky' ? `(CABIN.goTo('lakeside'), CABIN.look(-60, 38), true)`
+    : /^(p0|aerial|elev|lakeOut|car|plan)/.test(id) ? `(CABIN.setView('orbit'), CABIN.view('${id}',{instant:true}), true)` : `(CABIN.goTo('${id}'), true)`;
+  if (only.has('eval')) console.log('eval:', JSON.stringify(await ev(opt('--eval', '1'))));
+  if (only.has('looks')) { // Real-mode screenshots of named spots: --looks dining,pool,carFront
+    await ev(`(CABIN.setMode('real'), CABIN.setLabels(false), document.querySelector('#info').hidden = true, true)`);
+    for (const id of opt('--looks', 'dining,carFront').split(',')) { await ev(goShot(id)); await sleep(600); report.shots.push(await shot('h-look-' + id)); }
+  }
   if (only.has('photo')) {
     // --pplan "day:p03,living;night:p03,living;dusk:p01" — time of day, then views (VIEWS ids) or walk-to places
     const target = +opt('--spp', argv.includes('--gpu') ? 400 : 4);
-    const plan = opt('--pplan', 'day:p03,living,stair;night:p03,living,suite,gathering,terrace;dusk:p01').split(';').map((seg) => { const [t, v] = seg.split(':'); return [t, v.split(',')]; });
+    const plan = opt('--pplan', 'day:p03,living,stair;night:p03,living,suite,gathering,terrace;dusk:p01').split(';').map((seg) => { const i = seg.indexOf(':'); return [seg.slice(0, i), seg.slice(i + 1).split(',')]; });
     const waitSamples = async (label) => {
       const t0 = Date.now(); while (Date.now() - t0 < 300000) { if (await ev('CABIN.photo.active') && await ev('CABIN.photo.samples') >= target) break; await sleep(1000); }
       await sleep(1200); const n = await ev('CABIN.photo.samples');
@@ -177,11 +187,19 @@ try {
     const before = await ev(look);
     await ev(`(CABIN.setView('orbit'), document.querySelector('#info').hidden = true, CABIN.view('p03',{instant:true}), CABIN.setMode('photo'), true)`);
     await sleep(500); await ev(`(CABIN.setMode('photo'), true)`); // a second click must not corrupt the saved state
-    const go = (id) => id === 'fire' ? `(CABIN.walkAt(14.5, -5.5, -0.15, 41 * Math.PI / 180), CABIN.look(41, -9), true)` : id === 'sky' ? `(CABIN.goTo('lakeside'), CABIN.look(-60, 38), true)` : id === 'lakeOut' || /^p0|aerial|elev/.test(id) ? `(CABIN.setView('orbit'), CABIN.view('${id}',{instant:true}), true)` : `(CABIN.goTo('${id}'), true)`;
+    const go = (id) => goShot(id); const _unused = (id) => id === 'fire' ? `(CABIN.walkAt(14.5, -5.5, -0.15, 41 * Math.PI / 180), CABIN.look(41, -9), true)` : id === 'sky' ? `(CABIN.goTo('lakeside'), CABIN.look(-60, 38), true)` : id === 'lakeOut' || /^p0|aerial|elev/.test(id) ? `(CABIN.setView('orbit'), CABIN.view('${id}',{instant:true}), true)` : `(CABIN.goTo('${id}'), true)`;
     let first = true;
     for (const [time, views] of plan) {
       await ev(`(CABIN.photo.setTime('${time}'), true)`);
       for (const id of views) {
+        if (id.startsWith('sun:')) { await ev(`(CABIN.photo.setSun(${+id.slice(4)}), true)`); continue; }
+        if (id === 'moving') { // a frame grabbed while walking (W held): the fast preview, not a converged frame
+          await ev(goShot('living')); await resetWait(); await waitSamples(`${time} before moving`);
+          await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 }); await sleep(900);
+          report.shots.push(await shot(`g-photo-${time}-moving`));
+          await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 }); await sleep(300);
+          continue;
+        }
         await ev(go(id)); if (!first) await resetWait(); first = false;
         await waitSamples(`${time} ${id}`); report.shots.push(await shot(`g-photo-${time}-${id}`));
       }

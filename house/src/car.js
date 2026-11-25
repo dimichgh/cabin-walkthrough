@@ -35,12 +35,12 @@ export function buildCar(k) {
   }
   const S = ring[0].length;
   // which material a quad gets: glass in the greenhouse, black sill, paint elsewhere
-  const winX = [-6.75, 1.95], bPil = -1.15, cPil = -4.15, wsX = [-0.1, 2.3], rwX = [-L / 2 + 0.35, -5.9];
+  const winX = [-6.75, 1.95], bPil = -1.15, cPil = -4.15, wsX = [-0.1, 2.3];
   function matOf(xm, s) {
     const side = Math.min(s, 13 - s); // fold the left side onto the right: 0 bottom … 6 roof centre
     if (side <= 1) return 'carblack';
     if (side === 4) return xm > winX[0] && xm < winX[1] && Math.abs(xm - bPil) > 0.28 && Math.abs(xm - cPil) > 0.22 ? 'carglass' : xm > winX[0] && xm < winX[1] ? 'carblack' : 'carpaint';
-    if (side >= 5 && ((xm > wsX[0] + 0.12 && xm < wsX[1] - 0.05) || (xm > rwX[0] && xm < rwX[1] - 0.1))) return 'carglass';
+    if (side >= 5 && xm > wsX[0] + 0.12 && xm < wsX[1] - 0.05) return 'carglass';
     return 'carpaint';
   }
   const by = { carpaint: [], carglass: [], carblack: [] };
@@ -77,16 +77,18 @@ export function buildCar(k) {
   const xn = L / 2;
   k.box('carblack', xn - 0.25, xn + 0.03, 1.45, 2.35, -1.55, 1.55);                    // grille
   for (const sz of [-1, 1]) {
-    k.box('carlight', xn - 0.55, xn - 0.02, 2.4, 2.66, sz * 1.25 - 0.62, sz * 1.25 + 0.62); // headlamps
+    k.box('carlight', xn - 0.3, xn + 0.035, 2.38, 2.64, sz * 1.3 - 0.6, sz * 1.3 + 0.6);   // headlamps
     k.box('taillight', -xn - 0.03, -xn + 0.4, 3.35, 3.7, sz * 2.05 - 0.55, sz * 2.05 + 0.55);
     k.rbox('carpaint', 1.75, 3.88, sz * (halfW(1.75) + 0.28), 0.55, 0.38, 0.5, 0.12);   // mirrors
     k.box('carblack', 1.5, 1.95, 3.68, 3.74, sz * (halfW(1.75) + 0.05), sz * (halfW(1.75) + 0.3));
     for (const hx of [0.3, -2.75]) k.box('carlight', hx - 0.35, hx, 3.12, 3.2, sz * halfW(hx) - 0.02, sz * halfW(hx) + 0.03); // door handles
-    k.rod('carblack', [-5.5, 5.47, sz * (roofHalf(-3) - 0.35)], [-0.6, 5.5, sz * (roofHalf(-1) - 0.35)], 0.05, { seg: 8 }); // roof rails
+    { const z = sz * (roofHalf(-3) - 0.35); k.rod('carblack', [-5.5, top(-5.5) + 0.09, z], [-0.6, top(-0.6) + 0.09, z], 0.045, { seg: 8 }); // roof rails on feet
+      for (const fx of [-5.4, -0.7]) k.box('carblack', fx - 0.15, fx + 0.15, top(fx) - 0.02, top(fx) + 0.1, z - 0.06, z + 0.06); }
   }
   k.box('taillight', -xn - 0.02, -xn + 0.3, 3.5, 3.58, -1.5, 1.5);
-  k.box('carblack', xn - 0.45, xn + 0.06, 1.0, 1.55, -2.55, 2.55);                     // front bumper
-  k.box('carblack', -xn - 0.06, -xn + 0.45, 1.05, 1.75, -2.6, 2.6);                     // rear bumper
+  k.box('carblack', xn - 0.3, xn + 0.05, 1.0, 1.4, -2.35, 2.35);                       // front bumper
+  { const th = roofHalf(-xn) - 0.18; k.box('carglass', -xn - 0.025, -xn + 0.05, 3.82, top(-xn) - 0.2, -th, th); } // tailgate window
+  k.box('carblack', -xn - 0.05, -xn + 0.3, 1.05, 1.6, -2.4, 2.4);                       // rear bumper
   k.box('carlight', -xn - 0.04, -xn, 2.05, 2.75, -0.95, 0.95);                         // plate
   k.solid(-L / 2, L / 2, 0, 5.6, -halfW(0) - 0.4, halfW(0) + 0.4);
 }

@@ -323,6 +323,7 @@ export function buildFurniture(M) {
     point([x, y - 0.1, z], 4.0, 2700);
   }
   downlight(9.0, 25.5, CB, null, 5, { angle: 0.85 }); downlight(22.5, 5.0, CB, null, 4, { angle: 0.8 }); downlight(16.5, 15.2, CB, null, 4, { angle: 0.8 });
+  downlight(4.2, 9.0, CB, null, 4, { angle: 0.85, K: 4000 });                       // mechanical 003
 
   /* ═════════════ EXTERIOR · terrace, fire, wall lights, bollards ═════════════ */
   k.level = '1';
@@ -341,6 +342,7 @@ export function buildFurniture(M) {
   k.box('lamp', 59.96, 59.99, 3.45, 4.05, 11.63, 11.77); point([60.5, 3.75, 11.7], 1.1, 2700);
   // soffit downlights over the covered terrace
   downlight(8.0, -8.5, LV.FF2 - 1.0, [8.01, TERR, -8.5], 7, { angle: 0.8, K: 2700 }); downlight(20.0, -8.5, LV.FF2 - 1.0, [20.01, TERR, -8.5], 7, { angle: 0.8, K: 2700 });
+  k.level = '1'; downlight(42.0, 20.5, C1, null, 24, { angle: 1.0, K: 4000 }); downlight(52.0, 20.5, C1, null, 24, { angle: 1.0, K: 4000 }); // garage ceiling
   // path bollards along the north edge of the entry court
   k.level = 'site';
   for (const x of [40.5, 48.5, 56.5]) {
