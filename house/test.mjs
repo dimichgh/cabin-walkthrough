@@ -151,15 +151,21 @@ try {
     const target = +opt('--spp', argv.includes('--gpu') ? 400 : 4);
     const waitSamples = async (label) => {
       const t0 = Date.now(); while (Date.now() - t0 < 240000) { if (await ev('CABIN.photo.active') && await ev('CABIN.photo.samples') >= target) break; await sleep(1000); }
-      const n = await ev('CABIN.photo.samples'); console.log(`photo ${label}: ${n} samples in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+      await sleep(1200); const n = await ev('CABIN.photo.samples'); console.log(`photo ${label}: ${n} samples in ${((Date.now() - t0) / 1000).toFixed(0)} s · stats ${JSON.stringify(await ev('CABIN.photo.stats'))} · exposure ${await ev('CABIN.photo.exposure')}`);
       if (n < Math.min(target, 2)) fail(`photo mode did not render (${label}): ${n} samples`);
     };
-    await ev(`(CABIN.setView('orbit'), CABIN.setLabels(false), document.querySelector('#info').hidden = true, CABIN.view('p03',{instant:true}), CABIN.setMode('photo'), true)`);
+    const look = `JSON.stringify({ tm: CABIN.renderer.toneMapping, exp: CABIN.renderer.toneMappingExposure, env: CABIN.scene.environment?.uuid, bg: CABIN.scene.background?.uuid ?? null, fog: !!CABIN.scene.fog, labels: CABIN.state.labels })`;
+    await ev(`(CABIN.setView('orbit'), CABIN.setLabels(true), CABIN.setMode('real'), true)`);
+    const before = await ev(look);
+    await ev(`(CABIN.setView('orbit'), document.querySelector('#info').hidden = true, CABIN.view('p03',{instant:true}), CABIN.setMode('photo'), true)`);
+    await sleep(500); await ev(`(CABIN.setMode('photo'), true)`); // a second click must not corrupt the saved state
     await waitSamples('p03'); report.shots.push(await shot('g-photo-p03'));
     const resetWait = async () => { const t0 = Date.now(); await sleep(400); while (Date.now() - t0 < 15000 && await ev('CABIN.photo.samples') >= target) await sleep(200); };
-    for (const id of opt('--pviews', 'living,stair,suite,terrace').split(',')) { await ev(`(CABIN.goTo('${id}'), true)`); await resetWait(); await waitSamples(id); report.shots.push(await shot('g-photo-' + id)); }
+    for (const id of opt('--pviews', 'living,stair,suite,terrace').split(',')) { await ev(`(CABIN.goTo('${id}'), true)`); await resetWait(); await waitSamples(id); report.shots.push(await shot('g-photo-' + id));
+      if (id === 'lakeside') { await ev(`(CABIN.view('lakeOut',{instant:true}), true)`); await resetWait(); await waitSamples('lake'); report.shots.push(await shot('g-photo-lake')); } }
     await ev(`(CABIN.setView('orbit'), CABIN.view('p01',{instant:true}), true)`); await resetWait(); await waitSamples('p01'); report.shots.push(await shot('g-photo-p01'));
     await ev(`CABIN.setMode('real')`);
+    const after = await ev(look); if (after !== before) fail(`leaving photo mode did not restore the raster look: ${before} → ${after}`);
     const f0 = await ev('CABIN.frames'); await ev('CABIN.look(0,-4) || true'); await sleep(3000); if (!(await ev('CABIN.frames') > f0)) fail('render loop stopped after leaving photo mode');
     if (await ev('CABIN.state.mode') !== 'real') fail('could not leave photo mode');
   }

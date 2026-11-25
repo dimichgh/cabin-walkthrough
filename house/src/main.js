@@ -98,9 +98,9 @@ const S = { mode: 'real', view: 'orbit', levels: 'all', labels: true, cut: null 
 const LEVEL_SETS = { all: ['B', '1', '2', 'R'], roof: ['B', '1', '2'], ground: ['B', '1'], basement: ['B'] };
 const levelOn = (lv) => lv === 'site' || LEVEL_SETS[S.levels].includes(lv);
 
-let photoBusy = false, labelsBeforePhoto = null, evOffset = 0, evTouched = false;
+let photoBusy = false, labelsBeforePhoto = null, evOffset = 0;
 function setMode(mode) {
-  if (photoBusy || !['real', 'photo', 'xray', 'holo'].includes(mode)) return;
+  if (photoBusy || !['real', 'photo', 'xray', 'holo'].includes(mode) || (mode === 'photo' && S.mode === 'photo')) return;
   const prev = S.mode;
   if (prev === 'photo' && mode !== 'photo') { photo.exit(); window.CABIN?.setQuality(null); if (labelsBeforePhoto != null) setLabels(labelsBeforePhoto); labelsBeforePhoto = null; }
   S.mode = mode;
@@ -132,20 +132,28 @@ function enterPhoto(prev) {
   setCut(null); window.CABIN?.setQuality(1);
   photoBusy = true; busy(true, 'Preparing photo mode…');
   setTimeout(() => {
-    try { photo.enter(); autoExposure(true); }
-    catch (e) { console.error(e); photoBusy = false; busy(false); S.mode = 'real'; applyLook('real'); alert('Photo mode could not start on this device: ' + e.message); return; }
+    try { photo.enter(); exposure.cur = exposure.target = 1; applyExposure(); }
+    catch (e) { console.error(e); try { photo.exit(); } catch (_) {} photoBusy = false; busy(false); S.mode = 'real'; window.CABIN?.setQuality(null); if (labelsBeforePhoto != null) setLabels(labelsBeforePhoto); labelsBeforePhoto = null; applyLook('real'); alert('Photo mode could not start on this device: ' + e.message); return; }
     photoBusy = false; busy(false); lastCamKey = '';
   }, 40);
 }
-const insideHouse = () => { const s = walker.s; return S.view === 'walk' && ((s.x > 0.3 && s.x < 59.5 && s.z > 0.3 && s.z < 31.8) || (s.y > 9 && s.x > -0.3 && s.x < 28.3 && s.z > -15.2 && s.z < 32.3)); };
-let wasInside = null;
-function autoExposure(force) {
-  const inside = insideHouse();
-  if (!force && inside === wasInside) return;
-  wasInside = inside; if (force) evTouched = false;
-  const base = inside ? 3.2 : 1.0;
-  renderer.toneMappingExposure = base * Math.pow(2, evOffset);
-  $('#ev').value = evOffset;
+// photo exposure: a base for outdoors / indoors, then partial adaptation to the metered frame (log-average
+// luminance, quarter power), so a dark basement opens up without blowing out a bright living room. The Exposure
+// slider adds compensation in stops on top.
+const insideHouse = () => { const p = walker.s; return S.view === 'walk' && ((p.x > 0.3 && p.x < 59.5 && p.z > 0.3 && p.z < 31.8) || (p.y > 9 && p.x > -0.3 && p.x < 28.3 && p.z > -15.2 && p.z < 32.3)); };
+const exposure = { cur: 1, target: 1, metered: 0, L: 0.03, base: 1, snap: true, at: new THREE.Vector3() };
+const applyExposure = () => { renderer.toneMappingExposure = exposure.cur * Math.pow(2, evOffset); };
+const exposureFor = () => Math.max(0.6, Math.min(14, exposure.base * Math.pow(0.03 / Math.max(exposure.L, 1e-5), 0.25)));
+function meterExposure(real) {
+  const base = insideHouse() ? 3.4 : 1.0;
+  if (base !== exposure.base) { exposure.base = base; exposure.target = exposureFor(); }
+  const n = photo.samples;
+  for (const at of [4, 24, 96]) if (n >= at && exposure.metered < at) {
+    exposure.metered = at;
+    const L = photo.meter(); if (L > 0) { exposure.L = L; exposure.target = exposureFor(); }
+    if (exposure.snap) { exposure.cur = exposure.target; exposure.snap = false; applyExposure(); }
+  }
+  if (Math.abs(exposure.cur - exposure.target) > 1e-3) { exposure.cur += (exposure.target - exposure.cur) * Math.min(1, real * 5); applyExposure(); }
 }
 function setLevels(key) {
   if (!LEVEL_SETS[key]) return;
@@ -317,7 +325,7 @@ document.querySelectorAll('#bar button[data-view]').forEach((b) => b.addEventLis
 }));
 document.querySelectorAll('#side button[data-cam]').forEach((b) => b.addEventListener('click', () => view(b.dataset.cam)));
 $('#labelsBtn').addEventListener('click', () => setLabels(!S.labels));
-$('#ev').addEventListener('input', (e) => { evOffset = +e.target.value; evTouched = true; renderer.toneMappingExposure = (wasInside ? 3.2 : 1.0) * Math.pow(2, evOffset); });
+$('#ev').addEventListener('input', (e) => { evOffset = +e.target.value; applyExposure(); });
 $('#sunT').addEventListener('input', (e) => { const t = +e.target.value; placeSun(t); photo.setSun(t); needsRender = true; });
 $('#saveImg').addEventListener('click', () => photo.save(`cabin-photo-${photo.samples}spp.png`));
 for (const id of ['ev', 'sunT']) $('#' + id).addEventListener('change', (e) => e.target.blur());
@@ -376,8 +384,8 @@ function tick(now) {
   if (photo.active || photoBusy) {
     if (photoBusy) return;
     const key = camKey();
-    if (key !== lastCamKey) { lastCamKey = key; photo.cameraMoved(); try { updateTags(); } catch (e) { console.error(e); } if (!evTouched) autoExposure(false); }
-    photo.render();
+    if (key !== lastCamKey) { exposure.snap = !lastCamKey || camera.position.distanceTo(exposure.at) > 6; exposure.at.copy(camera.position); lastCamKey = key; exposure.metered = 0; photo.cameraMoved(); try { updateTags(); } catch (e) { console.error(e); } }
+    photo.render(); meterExposure(real);
     if (frames % 10 === 0) { const n = photo.samples; $('#photoInfo').textContent = n >= photo.maxSamples ? `Done · ${n} samples` : n < 3 ? 'Rendering…' : `Rendering · ${n} samples`; }
     needsRender = false;
     return;
@@ -386,7 +394,7 @@ function tick(now) {
   if (needsRender) { needsRender = false; try { updateTags(); } catch (e) { console.error(e); } renderer.render(scene, camera); }
 }
 let lastCamKey = '';
-const camKey = () => { const p = camera.position, q = camera.quaternion; return [p.x, p.y, p.z, q.x, q.y, q.z, q.w, camera.fov].map((v) => v.toFixed(4)).join(','); };
+const camKey = () => { const p = camera.position, q = camera.quaternion; return [p.x, p.y, p.z, q.x, q.y, q.z, q.w, camera.fov, camera.aspect].map((v) => v.toFixed(4)).join(','); };
 orbit.addEventListener('change', () => { needsRender = true; });
 
 /* ───────── automation / tests ───────── */
@@ -415,13 +423,13 @@ function checkPlaces() {
     return { id: p.id, ground: +g.toFixed(2), floorOk: Math.abs(g - p.walk.y) < 0.2, clear: walker.clearAt(p.walk.x, p.walk.z, g) };
   });
 }
-window.CABIN = {
+window.CABIN = { renderer, scene,
   get state() { return { ...S, walker: { ...walker.s } }; },
   setMode, setLevels, setCut, setView, view, goTo, walkAt, setLabels, testRoute, checkPlaces, stats: H.stats,
   openInfo(id) { const p = PLACES.find((q) => q.id === id); if (!p) throw new Error('no place ' + id); openInfo(p); return document.querySelector('#info h2').textContent; },
   places: PLACES.map((p) => p.id),
   get frames() { return frames; },
-  photo: { get active() { return photo.active && !photoBusy; }, get samples() { return photo.samples; }, setSun(t) { placeSun(t); photo.setSun(t); }, setEV(v) { evOffset = v; evTouched = true; renderer.toneMappingExposure = (wasInside ? 3.2 : 1.0) * Math.pow(2, v); } },
+  photo: { get active() { return photo.active && !photoBusy; }, get samples() { return photo.samples; }, setSun(t) { placeSun(t); photo.setSun(t); }, setEV(v) { evOffset = v; applyExposure(); }, get exposure() { return +exposure.cur.toFixed(2); }, meter: () => photo.meter(), get stats() { photo.meter(); return photo.stats; } },
   setQuality(v) { prPinned = v == null ? null : +v; pr = prPinned ?? PR_MAX; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); needsRender = true; return pr; },
   get pixelRatio() { return pr; },
   renderNow() { updateTags(); if (photo.active) photo.render(); else renderer.render(scene, camera); return true; },

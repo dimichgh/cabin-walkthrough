@@ -1,5 +1,5 @@
 // Photo mode: progressive path tracing (three-gpu-pathtracer). Real sky light and sun through the windows,
-// bounced light indoors, soft sun shadows, refracting glass, reflective water. While the camera moves you see a
+// bounced light indoors, soft sun shadows, thin reflective glass, reflective water. While the camera moves you see a
 // fast low-resolution preview; when it stops the frame converges.
 import * as THREE from 'three';
 import { WebGLPathTracer, DenoiseMaterial } from 'three-gpu-pathtracer';
@@ -17,7 +17,7 @@ export function sunDirection(t) {
 export function makeSky(sunDir, W = 1024, H = 512) {
   const data = new Float32Array(W * H * 4);
   const se = Math.asin(sunDir.y), low = 1 - Math.min(1, se / (50 * Math.PI / 180));           // 0 high sun … 1 at horizon
-  const zen = [0.07, 0.17, 0.46], hor = [0.52 + 0.25 * low, 0.64 + 0.05 * low, 0.82 - 0.2 * low];
+  const zen = [0.1, 0.19, 0.4], hor = [0.52 + 0.25 * low, 0.64 + 0.05 * low, 0.82 - 0.2 * low];
   const sunCol = [1.0, 0.94 - 0.22 * low, 0.86 - 0.42 * low], tint = [1.0, 0.8 - 0.15 * low, 0.55 - 0.2 * low];
   const skyScale = 0.55 * (0.45 + 0.55 * (1 - low)), E_sun = 3.4 * (0.35 + 0.65 * (1 - low * low));
   const rs = Math.max(0.265 * Math.PI / 180, 0.8 * Math.PI / H), cosRs = Math.cos(rs);
@@ -84,6 +84,13 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     const m = M[k].clone(); m.metalness = 0; m.roughness = rough; swaps[k] = m;
   }
 
+  // exposure meter: copy the accumulated (linear HDR) frame to a tiny float target and log-average its luminance
+  const MW = 64, MH = 40, meterRT = new THREE.WebGLRenderTarget(MW, MH, { type: THREE.FloatType, depthBuffer: false }), meterBuf = new Float32Array(MW * MH * 4);
+  const meterQuad = new FullScreenQuad(new THREE.ShaderMaterial({
+    uniforms: { map: { value: null } }, depthTest: false, depthWrite: false,
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: 'uniform sampler2D map; varying vec2 vUv; void main() { gl_FragColor = texture2D(map, vUv); }',
+  }));
   function init() {
     if (pt) return;
     pt = new WebGLPathTracer(renderer);
@@ -125,6 +132,7 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     get maxSamples() { return maxSamples; },
     get sun() { return sunT; },
     enter() { // returns after the scene has been prepared (BVH, textures)
+      if (active) return;
       init();
       saved = { tm: renderer.toneMapping, exp: renderer.toneMappingExposure, env: scene.environment, bg: scene.background, fog: scene.fog };
       active = true; scene.fog = null;
@@ -142,6 +150,18 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     cameraMoved() { if (active) pt.updateCamera(); },
     setSun(t) { sunT = t; if (active) { applySky(); pt.updateEnvironment(); } },
     render() { if (active && pt.samples < maxSamples) pt.renderSample(); },
+    meter() {
+      if (!active) return 0;
+      meterQuad.material.uniforms.map.value = pt.target.texture;
+      const prev = renderer.getRenderTarget(); renderer.setRenderTarget(meterRT); meterQuad.render(renderer);
+      renderer.readRenderTargetPixels(meterRT, 0, 0, MW, MH, meterBuf); renderer.setRenderTarget(prev);
+      const N = MW * MH, Ls = new Float32Array(N);
+      for (let i = 0; i < N; i++) { const k = i * 4; Ls[i] = 0.2126 * meterBuf[k] + 0.7152 * meterBuf[k + 1] + 0.0722 * meterBuf[k + 2]; }
+      Ls.sort(); const q = (f) => Ls[Math.min(N - 1, Math.floor(f * N))];
+      let sum = 0; for (let i = 0; i < N; i++) sum += Math.log(1e-4 + Math.min(Ls[i], 50));
+      this.stats = [Math.exp(sum / N), q(0.5), q(0.75), q(0.9), q(0.95), q(0.98)].map((v) => +v.toFixed(4));
+      return Math.exp(sum / N);
+    },
     save(name) {
       if (!active) return;
       pt.renderSample();
