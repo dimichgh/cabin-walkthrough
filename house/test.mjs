@@ -188,10 +188,49 @@ try {
     await ev(`(CABIN.setView('orbit'), document.querySelector('#info').hidden = true, CABIN.view('p03',{instant:true}), CABIN.setMode('photo'), true)`);
     await sleep(500); await ev(`(CABIN.setMode('photo'), true)`); // a second click must not corrupt the saved state
     const go = (id) => goShot(id); const _unused = (id) => id === 'fire' ? `(CABIN.walkAt(14.5, -5.5, -0.15, 41 * Math.PI / 180), CABIN.look(41, -9), true)` : id === 'sky' ? `(CABIN.goTo('lakeside'), CABIN.look(-60, 38), true)` : id === 'lakeOut' || /^p0|aerial|elev/.test(id) ? `(CABIN.setView('orbit'), CABIN.view('${id}',{instant:true}), true)` : `(CABIN.goTo('${id}'), true)`;
-    let first = true;
+    let first = true, lastId = 'view';
     for (const [time, views] of plan) {
       await ev(`(CABIN.photo.setTime('${time}'), true)`);
       for (const id of views) {
+        if (id === 'calib') { // noise vs samples, raw and denoised frames at checkpoints (no stop on noise)
+          await ev(`CABIN.photo._final({ goal: 0, stopAt: ${+opt('--calibmax', 1024) + 64} })`);
+          const marks = [64, 128, 256, 512, 1024, 2048].filter((m) => m <= +opt('--calibmax', 1024)); const t0 = Date.now();
+          while (marks.length && Date.now() - t0 < 1800000) {
+            const n = await ev('CABIN.photo.samples');
+            if (n >= marks[0]) {
+              const m = marks.shift(), f = await ev('CABIN.photo.final'), secs = Math.round((Date.now() - t0) / 1000);
+              console.log(`calib ${time} ${lastId}: ${n} samples · ${secs} s · noise ${f && f.noise && f.noise.toFixed(4)}`);
+              for (const T of [null, 0.05, 0.1, 0.2]) { await ev(`(CABIN.photo._draw(${T == null ? 'null' : `{ T: ${T}, sigma: 2.2 }`}), true)`); const r = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(out, `c-${time}-${lastId}-${m}-${T ?? 'raw'}.png`), Buffer.from(r.data, 'base64')); }
+            }
+            if (!await ev('CABIN.photo.final')) break;
+            await sleep(1000);
+          }
+          await ev('CABIN.photo.finalCancel()');
+          continue;
+        }
+        if (id === 'finalcancel') { // while the final render runs, W does not move the camera; Esc stops it without saving
+          if (!await ev('CABIN.photo.finalStart()')) fail('final render did not start');
+          const p0 = await ev('CABIN.camera.position.toArray().join()'); await sleep(1500);
+          await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 }); await sleep(700);
+          await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 });
+          const p1 = await ev('CABIN.camera.position.toArray().join()'), running = !!await ev('CABIN.photo.final');
+          await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Escape', key: 'Escape', windowsVirtualKeyCode: 27 }); await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Escape', key: 'Escape', windowsVirtualKeyCode: 27 }); await sleep(400);
+          const r = await ev('CABIN.photo.lastFinal'), bar = await ev("getComputedStyle(document.querySelector('#saveImg')).display");
+          console.log(`photo final cancel: moved ${p0 !== p1}, still running after W ${running}, after Esc ${JSON.stringify(r)}, save button ${bar}`);
+          if (p0 !== p1 || !running || r?.reason !== 'cancelled' || await ev('CABIN.photo.final') || bar === 'none') fail('final render lock / cancel failed');
+          continue;
+        }
+        if (id === 'final') { // Save image: render until clean, then save
+          const t0 = Date.now(); const n0 = await ev('CABIN.photo.samples');
+          if (!await ev('CABIN.photo.finalStart()')) fail('final render did not start');
+          let last = '';
+          while (Date.now() - t0 < 1200000 && await ev('CABIN.photo.final')) { await sleep(2000); const st = await ev("document.querySelector('#photoInfo').textContent"); if (st !== last && /%/.test(st) && Math.random() < 0.15) console.log('  ' + st); last = st; }
+          const r = await ev('CABIN.photo.lastFinal');
+          console.log(`photo ${time} final (${lastId}): ${JSON.stringify(r)} · from ${n0} samples · status "${await ev("document.querySelector('#photoInfo').textContent")}"`);
+          if (!r || !['clean', 'max'].includes(r.reason)) fail(`final render did not finish cleanly: ${JSON.stringify(r)}`);
+          report.shots.push(await shot(`g-photo-${time}-${lastId}-final`));
+          continue;
+        }
         if (id.startsWith('sun:')) { await ev(`(CABIN.photo.setSun(${+id.slice(4)}), true)`); continue; }
         if (id === 'moving') { // a frame grabbed while walking (W held): the fast preview, not a converged frame
           await ev(goShot('living')); await resetWait(); await waitSamples(`${time} before moving`);
@@ -200,7 +239,7 @@ try {
           await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 }); await sleep(300);
           continue;
         }
-        await ev(go(id)); if (!first) await resetWait(); first = false;
+        await ev(go(id)); if (!first) await resetWait(); first = false; lastId = id;
         await waitSamples(`${time} ${id}`); report.shots.push(await shot(`g-photo-${time}-${id}`));
       }
     }
@@ -233,7 +272,7 @@ try {
 finally {
   if (external.size) fail('external requests: ' + [...external].join(', '));
   const errs = logs.filter((l) => !/GPU stall|swiftshader|WebGL: INVALID|THREE.WebGLRenderer: Context Lost/i.test(l));
-  if (errs.length) { console.log('console:\n  ' + errs.slice(0, 12).join('\n  ')); if (errs.some((l) => l.startsWith('[exception]') || l.startsWith('[error]'))) fail('page logged errors'); }
+  if (errs.length) { console.log('console:\n  ' + errs.slice(0, 12).map((l) => l.slice(0, 1600)).join('\n  ')); if (errs.some((l) => l.startsWith('[exception]') || l.startsWith('[error]'))) fail('page logged errors'); }
   fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify({ problems, external: [...external], ...report }, null, 1));
   console.log(problems.length ? `\n✗ ${problems.length} problem(s)` : `\n✓ all checks passed · 0 external requests · shots in ${path.relative(process.cwd(), out)}/`);
   try { ws?.close(); } catch { } chrome.kill('SIGKILL'); server.close();

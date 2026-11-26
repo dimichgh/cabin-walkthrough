@@ -3,7 +3,7 @@
 `dist/cabin-house.html` is one self-contained file. three.js, the app and the facts are all inline, so it makes no network requests. Open it straight from disk, or publish it to any static host.
 
 ## What it does
-- **Photo** (key `P`): path-traced, photorealistic frames that converge while the camera is still. Choose **Day / Dusk / Night**: at dusk and night the interior and exterior lights and the outdoor fire come on. Use the Exposure and Sun sliders, then Save image.
+- **Photo** (key `P`): path-traced, photorealistic frames that converge while the camera is still. Choose **Day / Dusk / Night**: at dusk and night the interior and exterior lights and the outdoor fire come on. Use the Exposure and Sun sliders, then **Save image**: it renders at full speed until the frame is clean (it measures the remaining noise between checkpoints and shows progress and time left), finishes with an edge-preserving denoise and downloads a PNG at the window's size. **Save now** saves early, **Cancel** or Esc stops; the camera is locked while it renders.
 - **Furniture** (key `F`) and **Car** (key `C`): illustrative furniture, lamps and an SUV on the drive, each switchable. Their walk colliders switch with them.
 - **Real / X-ray / Holo** (keys `1 2 3`): switch between real materials and two see-through views. The real materials are procedural Ipe rain screen, standing-seam metal, glass, concrete, flagstone and white oak.
 - **Orbit / Walk** (key `V`):

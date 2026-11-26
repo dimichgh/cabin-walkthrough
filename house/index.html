@@ -75,6 +75,7 @@
   body[data-mode="photo"] #photoBar { display: flex; }
   #photoBar label { display: flex; gap: 6px; align-items: center; font-weight: 550; } #photoBar input { width: 90px; accent-color: var(--acc); }
   #photoInfo { font-weight: 650; min-width: 150px; font-variant-numeric: tabular-nums; }
+  #finalCtl { display: none; gap: 8px; } body.final #finalCtl { display: flex; } body.final #saveImg, body.final #timeSeg, body.final #sunLbl { display: none; }
   #sunLbl.off { opacity: .35; pointer-events: none; }
   body[data-mode="photo"] .cut { opacity: .35; pointer-events: none; }
   #busy { position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%); padding: 14px 20px; font-weight: 600; }
@@ -142,7 +143,8 @@
   <div class="seg" id="timeSeg" title="Time of day: lights come on at dusk and night"><button data-time="day" class="on">Day</button><button data-time="dusk">Dusk</button><button data-time="night">Night</button></div>
   <label title="Exposure, in stops">Exposure <input type="range" id="ev" min="-2" max="2" step="0.1" value="0"></label>
   <label id="sunLbl" title="Sun position (daytime): morning (east) to evening (west)">Sun <input type="range" id="sunT" min="0.06" max="0.94" step="0.01" value="0.78"></label>
-  <button id="saveImg" class="tog">Save image</button>
+  <button id="saveImg" class="tog" title="Render until the image is clean, then save it as PNG">Save image</button>
+  <span id="finalCtl"><button id="saveNow" class="tog" title="Save the image as it is now">Save now</button><button id="cancelFinal" class="tog" title="Stop without saving (Esc)">Cancel</button></span>
 </div>
 <div id="busy" class="panel" hidden></div>
 <div id="compass" class="panel" title="Plan north"><b>N</b><i></i></div>
@@ -150,7 +152,7 @@
 <div id="help" class="panel">
   <h4>How to use</h4>
   <p><kbd>1</kbd> Real materials · <kbd>P</kbd> Photo (path traced) · <kbd>2</kbd> X-ray · <kbd>3</kbd> Hologram</p>
-  <p>Photo mode refines the image while the camera is still: stop moving for a few seconds for a clean frame, then use Save image. Exposure, Day / Dusk / Night and the Sun position are in the photo bar. At dusk and night the interior and exterior lights come on.</p>
+  <p>Photo mode refines the image while the camera is still: stop moving for a few seconds to see it clean up. <b>Save image</b> keeps rendering at full speed until the image is clean (a minute or two by day, longer at night), then saves a PNG; <b>Save now</b> saves it as it is, <b>Cancel</b> or Esc stops. Keep the tab open while it renders. Exposure, Day / Dusk / Night and the Sun position are in the photo bar. At dusk and night the interior and exterior lights come on.</p>
   <p><kbd>V</kbd> toggle walk / orbit · <kbd>W A S D</kbd> walk · <kbd>←</kbd><kbd>→</kbd> turn · <kbd>Shift</kbd> run · <kbd>L</kbd> labels · <kbd>F</kbd> furniture · <kbd>C</kbd> car</p>
   <p>Stairs work: walk onto them. On a phone, drag the left side to move and the right side to look.</p>
   <p>Independent study model, not affiliated with the architects. The construction drawings were published by Bob Borson on Life of an Architect (The Cabin Project).</p>

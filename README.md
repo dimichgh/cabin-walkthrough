@@ -16,7 +16,7 @@ The whole site is one self-contained HTML file, `docs/index.html`. three.js, the
 | | |
 |---|---|
 | `1` `2` `3` | Real · X-ray · Holo |
-| `P` | Photo (path traced): hold the camera still and the frame refines over a few seconds to a minute. Exposure, Sun (time of day) and Save image are in the photo bar |
+| `P` | Photo (path traced): hold the camera still and the frame refines over a few seconds to a minute. Exposure, Day / Dusk / Night, Sun and Save image are in the photo bar. Save image keeps rendering until the frame is clean, then downloads a PNG (Save now / Cancel / Esc while it runs) |
 | `F` · `C` | furniture · car on / off |
 | `V` | walk / orbit |
 | `W A S D`, mouse | walk and look (click to lock the pointer, or drag) · `Shift` runs |

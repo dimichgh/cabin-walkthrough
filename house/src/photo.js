@@ -224,8 +224,12 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
       quad.render(r);
       const n = pt.samples;
       if (quad.material.opacity >= 1) {
-        if (n < FADE) {
-          const k = 1 - n / FADE;
+        const k = n < FADE ? 1 - n / FADE : 0;
+        const fd = finalDen || (keepDen || job ? { T: denT, sigma: DEN_SIGMA } : null);
+        if (fd) { // final render / saved frame: edge-preserving, threshold in display terms (the input is linear HDR, so ÷ exposure)
+          den.uniforms.map.value = target.texture; den.uniforms.sigma.value = fd.sigma; den.uniforms.kSigma.value = 1.5;
+          den.uniforms.threshold.value = fd.T / Math.max(0.2, r.toneMappingExposure); den.uniforms.opacity.value = 1; denQuad.render(r);
+        } else if (k > 0) {
           den.uniforms.map.value = target.texture; den.uniforms.sigma.value = 2.5 + 3.5 * k; den.uniforms.threshold.value = 0.04 + 0.08 * k; den.uniforms.kSigma.value = 1;
           den.uniforms.opacity.value = Math.min(1, k * 1.25); denQuad.render(r);
         }
@@ -247,7 +251,121 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     for (const mesh of house) { const k = mesh.userData.mat; if (swaps[k]) mesh.material = on ? swaps[k] : M[k]; }
     site.traverse((o) => { if (o.userData.site === 'lake') o.material = on ? water : M.water; });
   }
+  /* ── final render for "Save image" ──
+     Keeps tracing until the picture is visually clean, then saves it. Faster than the interactive view: several
+     samples per animation frame (as many as the GPU keeps up with), the screen redrawn only twice a second, no
+     preview passes. "Clean" is measured: every so often the frame is read back at half resolution (every other
+     pixel, so noise is not averaged away) and compared with the previous checkpoint. With n0 samples then n1, the
+     change between them predicts the noise still left at n1: noise ≈ change × √(n0 / (n1 − n0)). */
+  // Stop rule and finish, calibrated on the darkest case (daylit dining, exposure ~6–9): the raw frame still shows
+  // grain at noise 0.02, but an edge-preserving denoise whose threshold follows the exposure cleans it without
+  // blurring edges, so the saved frame gets that denoise and the render stops much earlier than raw-clean would.
+  // Lamp-lit frames (dusk / night) have spikier noise than daylight, so they need more samples and a lower goal;
+  // the denoise is scaled to the noise that is left (a frame that is already clean is barely touched).
+  const GOALS = { day: [0.018, 128], dusk: [0.013, 256], night: [0.013, 256] }; // [noise goal, minimum samples]
+  const DEN_SIGMA = 2.2, denFor = (noise) => 0.1 * Math.min(1, Math.max(0.3, (noise ?? 0.02) / 0.02));
+  let job = null, lastFinal = null, finalDen = null, keepDen = false, denT = denFor(null); // keepDen: keep showing the saved (denoised) look
+  const half = { rt: null, buf: null };
+  const fetchQuad = new FullScreenQuad(new THREE.ShaderMaterial({
+    uniforms: { map: { value: null } }, depthTest: false, depthWrite: false, // WebGL2: GLSL ES 3.00, so texelFetch
+    vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: 'uniform sampler2D map; void main() { gl_FragColor = texelFetch(map, ivec2(gl_FragCoord.xy) * 2, 0); }',
+  }));
+  function readHalf() { // the accumulated frame, every other pixel, as display-ish luminance (tone curve + gamma)
+    const t = pt.target, w = Math.max(1, t.width >> 1), h = Math.max(1, t.height >> 1);
+    if (!half.rt || half.rt.width !== w || half.rt.height !== h) {
+      half.rt?.dispose(); half.rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.FloatType, depthBuffer: false }); half.buf = new Float32Array(w * h * 4);
+    }
+    fetchQuad.material.uniforms.map.value = t.texture;
+    const prev = renderer.getRenderTarget(); renderer.setRenderTarget(half.rt); fetchQuad.render(renderer);
+    renderer.readRenderTargetPixels(half.rt, 0, 0, w, h, half.buf); renderer.setRenderTarget(prev);
+    const e = renderer.toneMappingExposure, b = half.buf, out = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) { const L = (0.2126 * b[i * 4] + 0.7152 * b[i * 4 + 1] + 0.0722 * b[i * 4 + 2]) * e; out[i] = Math.sqrt(L / (1 + L)); }
+    return out;
+  }
+  function checkpoint() {
+    const n = pt.samples;
+    if (n % 1 !== 0 || n < job.next) return; // whole samples only (a sample is four tiles)
+    const cur = readHalf();
+    let sum = 0; for (let i = 0; i < cur.length; i += 97) sum += cur[i];
+    if (!(sum > 0) || gl.isContextLost()) { job.blind = true; job.needed = Math.max(job.needed || 0, 600); job.next = n + 64; return; } // could not read the frame: fixed sample count
+    if (job.snap) {
+      let s = 0; const a = job.snap;
+      for (let i = 0; i < cur.length; i++) s += Math.min(0.08, Math.abs(cur[i] - a[i])); // clamp: one firefly is not "noise"
+      if (s === 0) { job.blind = true; job.needed = Math.max(job.needed || 0, 600); job.snap = cur; job.snapN = n; job.next = n + 64; return; } // identical frames: nothing was rendered
+      job.noise = (s / cur.length) * Math.sqrt(job.snapN / (n - job.snapN)); denT = denFor(job.noise);
+      job.needed = Math.min(maxSamples, Math.max(job.min, n * Math.pow(job.noise / job.goal, 2)));
+      job.log.push([job.snapN, n, +(s / cur.length).toFixed(5), +job.noise.toFixed(5), +sum.toFixed(1), +renderer.toneMappingExposure.toFixed(2)]);
+    }
+    job.snap = cur; job.snapN = n; job.next = n + Math.min(128, Math.max(16, Math.round(n * 0.25)));
+  }
+  function drawCanvas() { pt.pausePathTracing = true; pt.renderToCanvas = true; pt.renderSample(); pt.pausePathTracing = false; }
+  function endJob(saveIt, reason) {
+    if (!job) return null;
+    const j = job; job = null;
+    for (const f of j.fences) gl.deleteSync(f.sync);
+    pt.fadeDuration = j.fade; pt.renderToCanvas = true;
+    lastFinal = { reason, samples: Math.floor(pt.samples), ms: Math.round(performance.now() - j.t0), noise: j.noise == null ? null : +j.noise.toFixed(5), log: j.log, batch: j.batch,
+      rate: +((pt.samples - j.n0) / Math.max(0.001, (performance.now() - j.t0) / 1000)).toFixed(2) };
+    if (saveIt) { keepDen = true; drawCanvas(); saveCanvas(j.name(lastFinal.samples)); }
+    j.onDone?.(lastFinal);
+    return lastFinal;
+  }
+  function saveCanvas(name) {
+    renderer.domElement.toBlob((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, 'image/png');
+  }
+  // GPU pacing: WebGL calls return long before the GPU has done the work, so frame times say nothing about the GPU
+  // queue (queuing by frame time piled up work until the browser reset the GPU). Each batch ends with a fence; at
+  // most two batches are in flight, each sized from the measured GPU time to about BATCH_MS and never more than
+  // MAX_TILES (two samples): a long single submission can trip the browser's GPU watchdog and reset the context.
+  const BATCH_MS = 50, MAX_TILES = 8, gl = renderer.getContext();
+  function jobFrame() {
+    if (gl.isContextLost()) { endJob(false, 'graphics reset'); return; }
+    // fences complete in order: a batch's GPU time runs from when it could start (submitted, and the one before it
+    // done) to when its fence is seen done (polled once a frame, so this errs long, never short)
+    while (job.fences.length && gl.clientWaitSync(job.fences[0].sync, 0, 0) !== gl.TIMEOUT_EXPIRED) {
+      const f = job.fences.shift(), done = performance.now(); gl.deleteSync(f.sync);
+      const per = Math.max(2, (done - Math.max(f.submitted, job.lastDone)) / f.tiles); job.lastDone = done;
+      job.perTile = job.perTile ? job.perTile * 0.6 + per * 0.4 : per;
+      job.batch = Math.max(1, Math.min(MAX_TILES, Math.floor(BATCH_MS / job.perTile)));
+    }
+    if (job.fences.length >= 2) return; // the GPU is busy enough
+    pt.renderToCanvas = false;
+    let sent = 0;
+    for (let i = 0; i < job.batch && job; i++) { sent++;
+      if (pt.samples >= Math.min(maxSamples, job.stopAt)) { endJob(true, 'max'); return; }
+      pt.renderSample(); checkpoint();
+      if (!job.blind && job.noise != null && job.noise <= job.goal && pt.samples >= job.min) { endJob(true, 'clean'); return; }
+      if (job.blind && pt.samples >= job.needed) { endJob(true, 'max'); return; }
+    }
+    if (!job) return;
+    pt.renderToCanvas = true;
+    const now = performance.now();
+    if (now - job.shown > 500) { job.shown = now; drawCanvas(); }
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush();
+    job.fences.push({ sync, submitted: now, tiles: sent });
+  }
+
   return {
+    // start the final render; name(samples) gives the file name; onDone({ reason, samples, ms, noise, … })
+    finalStart({ name = (n) => `cabin-photo-${n}spp.png`, onDone, goal = GOALS[time][0], min = GOALS[time][1], stopAt = maxSamples } = {}) {
+      if (!active || job || gl.isContextLost()) return false;
+      denT = denFor(null);
+      job = { t0: performance.now(), n0: pt.samples, next: Math.max(8, Math.ceil(pt.samples)), snap: null, snapN: 0, noise: null, log: [], needed: null, goal, batch: 1, fences: [], perTile: 0, lastDone: 0, shown: 0, fade: pt.fadeDuration, name, onDone, stopAt, min };
+      pt.fadeDuration = 0;
+      return true;
+    },
+    finalSaveNow() { return endJob(true, 'early'); },
+    finalCancel(reason = 'cancelled') { return endJob(false, reason); },
+    get final() {
+      if (!job) return null;
+      const n = pt.samples, secs = (performance.now() - job.t0) / 1000, rate = (n - job.n0) / Math.max(0.001, secs);
+      const progress = job.needed ? Math.min(0.99, n / job.needed) : null;
+      return { samples: Math.floor(n), noise: job.noise, progress, eta: job.needed && rate > 0 ? Math.max(0, (job.needed - n) / rate) : null, batch: job.batch, rate };
+    },
+    get lastFinal() { return lastFinal; },
+    get _pt() { return pt; }, // diagnostics
+    _draw(d = null) { if (job) job.shown = performance.now() + 2500; finalDen = d; drawCanvas(); finalDen = null; },
     get active() { return active; },
     get samples() { return pt ? Math.floor(pt.samples) : 0; },
     get maxSamples() { return maxSamples; },
@@ -267,23 +385,24 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     },
     exit() {
       if (!active) return;
+      endJob(false, 'left photo mode'); keepDen = false;
       active = false; setVisibility(false); applyLights(); applyPreview();
       renderer.toneMapping = saved.tm; renderer.toneMappingExposure = saved.exp;
       scene.environment = saved.env; scene.background = saved.bg; scene.fog = saved.fog;
     },
-    rebuild() { if (active) pt.setScene(scene, camera); },           // after a cutaway change
-    cameraMoved() { if (active) pt.updateCamera(); },
-    setSun(t) { sunT = t; if (active && time === 'day') { applySky(); pt.updateEnvironment(); } },
+    rebuild() { if (active) { endJob(false, 'scene changed'); keepDen = false; pt.setScene(scene, camera); } },           // after a cutaway change
+    cameraMoved() { if (active) { endJob(false, 'camera moved'); keepDen = false; pt.updateCamera(); } },
+    setSun(t) { sunT = t; if (active && time === 'day') { endJob(false, 'sun moved'); keepDen = false; applySky(); pt.updateEnvironment(); } },
     // day / dusk / night: new sky, glow on or off, lights on or off — no scene rebuild needed
     setTime(t) {
       if (!['day', 'dusk', 'night'].includes(t)) return false;
-      time = t; applyGlow();
+      endJob(false, 'time changed'); keepDen = false; time = t; applyGlow();
       if (active) { applySky(); applyLights(); applyPreview(); pt.updateEnvironment(); pt.updateMaterials(); pt.updateLights(); }
       return true;
     },
     // re-evaluate which night lights are on (cutaway, furniture toggle, where the camera is)
-    refreshLights() { if (active && applyLights()) pt.updateLights(); },
-    render() { if (active && pt.samples < maxSamples) pt.renderSample(); },
+    refreshLights() { if (active && applyLights()) { endJob(false, 'lights changed'); keepDen = false; pt.updateLights(); } },
+    render() { if (!active) return; if (job) jobFrame(); else if (pt.samples < maxSamples) pt.renderSample(); },
     meter() {
       if (!active) return 0;
       meterQuad.material.uniforms.map.value = pt.target.texture;
@@ -298,8 +417,7 @@ export function makePhoto({ renderer, scene, camera, M, sky, lights, site, house
     },
     save(name) {
       if (!active) return;
-      pt.renderSample();
-      renderer.domElement.toBlob((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, 'image/png');
+      drawCanvas(); saveCanvas(name);
     },
   };
 }

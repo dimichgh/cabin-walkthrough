@@ -270,6 +270,7 @@ function goTo(id) {
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.metaKey || e.ctrlKey || e.altKey) return; // leave browser shortcuts (copy, find…) alone
+  if (photo.final) { if (e.code === 'Escape') photo.finalCancel(); return; } // final render: camera and scene stay put
   keys.add(e.code);
   if (e.repeat) return;
   if (e.code === 'Digit1') setMode('real'); else if (e.code === 'Digit2') setMode('xray'); else if (e.code === 'Digit3') setMode('holo');
@@ -291,7 +292,7 @@ addEventListener('mousemove', (e) => {
 });
 canvas.addEventListener('mousedown', (e) => { if (S.view === 'walk') lookDrag = { x: e.clientX, y: e.clientY }; });
 addEventListener('mouseup', () => { lookDrag = null; });
-function look(dx, dy) { walker.s.yaw -= dx * 0.0024; walker.s.pitch = Math.max(-80 * D, Math.min(80 * D, walker.s.pitch - dy * 0.0024)); needsRender = true; }
+function look(dx, dy) { if (photo.final) return; walker.s.yaw -= dx * 0.0024; walker.s.pitch = Math.max(-80 * D, Math.min(80 * D, walker.s.pitch - dy * 0.0024)); needsRender = true; }
 // touch: left third = move stick, elsewhere = look
 const touches = new Map();
 canvas.addEventListener('touchstart', (e) => { if (S.view !== 'walk') return; for (const t of e.changedTouches) touches.set(t.identifier, { x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, stick: t.clientX < innerWidth * 0.38 }); e.preventDefault(); }, { passive: false });
@@ -380,7 +381,39 @@ $('#carBtn').addEventListener('click', () => setOption('car', !S.car));
 document.querySelectorAll('#timeSeg button').forEach((b) => b.addEventListener('click', () => setTime(b.dataset.time)));
 $('#ev').addEventListener('input', (e) => { evOffset = +e.target.value; applyExposure(); });
 $('#sunT').addEventListener('input', (e) => { const t = +e.target.value; placeSun(t); photo.setSun(t); exposure.metered = 0; needsRender = true; });
-$('#saveImg').addEventListener('click', () => photo.save(`cabin-photo-${photo.samples}spp.png`));
+// Save image: render until clean (see photo.js), then save; Save now / Cancel while it runs
+let finalMsg = null, wakeLock = null;
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+function startFinal() {
+  if (photoBusy || gpuLost || !photo.active || photo.final) return false;
+  const ok = photo.finalStart({
+    name: (n) => `cabin-${S.time}-${n}spp.png`,
+    onDone: (r) => {
+      document.body.classList.remove('final'); orbit.enabled = S.view === 'orbit';
+      wakeLock?.release?.().catch(() => {}); wakeLock = null;
+      const saved = ['clean', 'max', 'early'].includes(r.reason);
+      finalMsg = { text: saved ? `Saved · ${r.samples} samples · ${mmss(r.ms / 1000)}` : `Final render stopped: ${r.reason}`, until: performance.now() + 6000 };
+      $('#photoInfo').textContent = finalMsg.text;
+    },
+  });
+  if (!ok) return false;
+  document.body.classList.add('final'); orbit.enabled = false; keys.clear(); finalMsg = null;
+  navigator.wakeLock?.request?.('screen').then((l) => { wakeLock = l; }).catch(() => {}); // keep the screen on while it renders
+  return true;
+}
+$('#saveImg').addEventListener('click', () => startFinal());
+// if the browser resets the GPU (an overloaded or sleeping GPU), say so instead of showing a frozen picture
+// (a restored context has lost every GPU resource, so the path tracer cannot carry on: stay stopped until a reload)
+let gpuLost = false;
+canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); gpuLost = true; try { photo.finalCancel('graphics reset'); } catch (_) {} busy(true, 'The browser reset the graphics. Reload the page to continue.'); });
+$('#saveNow').addEventListener('click', () => photo.finalSaveNow());
+$('#cancelFinal').addEventListener('click', () => photo.finalCancel());
+function photoStatus() {
+  const f = photo.final, n = photo.samples;
+  if (f) return f.progress == null ? `Final render · ${f.samples} samples · measuring…` : `Final render · ${Math.round(f.progress * 100)}%${f.eta != null ? ` · about ${mmss(f.eta)} left` : ''}`;
+  if (finalMsg && performance.now() < finalMsg.until) return finalMsg.text;
+  return n >= photo.maxSamples ? `Done · ${n} samples` : n < 3 ? 'Rendering…' : `Rendering · ${n} samples`;
+}
 for (const id of ['ev', 'sunT']) $('#' + id).addEventListener('change', (e) => e.target.blur());
 $('#cutOn').addEventListener('change', (e) => { setCut(e.target.checked ? +$('#cutH').value : null); e.target.blur(); });
 $('#cutH').addEventListener('input', (e) => setCut(+e.target.value));
@@ -412,7 +445,7 @@ function tick(now) {
   frames++;
   const real = Math.min(0.25, Math.max(0, (now - last) / 1000)); last = now; // real time, so walking keeps pace on slow GPUs
   const dt = Math.min(0.05, real);
-  if (S.view === 'walk') {
+  if (S.view === 'walk' && !photo.final) {
     input.f = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
     input.r = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
     if (keys.has('ArrowLeft')) look(-260 * real, 0); if (keys.has('ArrowRight')) look(260 * real, 0);
@@ -430,7 +463,7 @@ function tick(now) {
       camera.fov = fly.from.fov + (fly.to.fov - fly.from.fov) * k; camera.updateProjectionMatrix();
       if (fly.t >= 1) fly = null; needsRender = true;
     }
-    if (orbit.update()) needsRender = true;
+    if (!photo.final && orbit.update()) needsRender = true;
   }
   // compass: plan north is −z
   const d = camera.getWorldDirection(tmp); $('#compass').style.transform = `rotate(${Math.atan2(d.x, -d.z) * -180 / Math.PI}deg)`;
@@ -438,8 +471,9 @@ function tick(now) {
     if (photoBusy) return;
     const key = camKey();
     if (key !== lastCamKey) { exposure.snap = !lastCamKey || camera.position.distanceTo(exposure.at) > 6; exposure.at.copy(camera.position); lastCamKey = key; exposure.metered = 0; photo.refreshLights(); photo.cameraMoved(); try { updateTags(); } catch (e) { console.error(e); } }
+    if (gpuLost) return;
     photo.render(); meterExposure(real);
-    if (frames % 10 === 0) { const n = photo.samples; $('#photoInfo').textContent = n >= photo.maxSamples ? `Done · ${n} samples` : n < 3 ? 'Rendering…' : `Rendering · ${n} samples`; }
+    if (frames % 10 === 0) $('#photoInfo').textContent = photoStatus();
     needsRender = false;
     return;
   }
@@ -476,14 +510,14 @@ function checkPlaces() {
     return { id: p.id, ground: +g.toFixed(2), floorOk: Math.abs(g - p.walk.y) < 0.2, clear: walker.clearAt(p.walk.x, p.walk.z, g) };
   });
 }
-window.CABIN = { renderer, scene,
+window.CABIN = { renderer, scene, camera,
   get state() { return { ...S, walker: { ...walker.s } }; },
   setMode, setLevels, setCut, setView, view, goTo, walkAt, setLabels, setOption, testRoute, checkPlaces, stats: H.stats,
   get counts() { return { meshes: H.meshes.length, visible: H.meshes.filter((m) => m.visible).length, colliders: walker.colliderCount?.() ?? null, optOff: optColliders.filter((c) => c.off).length, lights: nightLights.children.filter((l) => l.isLight).length }; },
   openInfo(id) { const p = PLACES.find((q) => q.id === id); if (!p) throw new Error('no place ' + id); openInfo(p); return document.querySelector('#info h2').textContent; },
   places: PLACES.map((p) => p.id),
   get frames() { return frames; },
-  photo: { setTime, rebuild() { photoRebuild(); }, get time() { return photo.time; }, get lights() { return photo.lightCount; }, get glow() { return photo.glow; }, get active() { return photo.active && !photoBusy; }, get samples() { return photo.samples; }, setSun(t) { placeSun(t); photo.setSun(t); }, setEV(v) { evOffset = v; applyExposure(); }, get exposure() { return +exposure.cur.toFixed(2); }, meter: () => photo.meter(), get stats() { photo.meter(); return photo.stats; } },
+  photo: { setTime, finalStart: () => startFinal(), finalSaveNow: () => photo.finalSaveNow(), finalCancel: () => photo.finalCancel(), get final() { return photo.final; }, get lastFinal() { return photo.lastFinal; }, get _pt() { return photo._pt; }, _draw: (k) => photo._draw(k), _final: (o) => photo.finalStart(o), rebuild() { photoRebuild(); }, get time() { return photo.time; }, get lights() { return photo.lightCount; }, get glow() { return photo.glow; }, get active() { return photo.active && !photoBusy; }, get samples() { return photo.samples; }, setSun(t) { placeSun(t); photo.setSun(t); }, setEV(v) { evOffset = v; applyExposure(); }, get exposure() { return +exposure.cur.toFixed(2); }, meter: () => photo.meter(), get stats() { photo.meter(); return photo.stats; } },
   setQuality(v) { prPinned = v == null ? null : +v; pr = prPinned ?? PR_MAX; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); needsRender = true; return pr; },
   get pixelRatio() { return pr; },
   renderNow() { updateTags(); if (photo.active) photo.render(); else renderer.render(scene, camera); return true; },
